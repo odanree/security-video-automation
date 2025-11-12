@@ -1,4 +1,4 @@
-# Automatically Merge PRs and Clean Up Branches
+﻿# Automatically Merge PRs and Clean Up Branches
 # Uses GitHub CLI to merge PRs with squash commits
 
 param(
@@ -46,9 +46,9 @@ foreach ($branch in $merge_order) {
             gh pr merge $pr.number --squash --delete-branch --auto
             
             if ($LASTEXITCODE -eq 0) {
-                Write-Host "  ✓ Merged and branch deleted`n" -ForegroundColor Green
+                Write-Host "  [OK] Merged and branch deleted`n" -ForegroundColor Green
             } else {
-                Write-Host "  ⚠ Merge failed - may require manual review`n" -ForegroundColor Red
+                Write-Host "  [WARN] Merge failed - may require manual review`n" -ForegroundColor Red
             }
         } else {
             Write-Host "  [DRY RUN] Would merge and delete branch`n" -ForegroundColor Gray
@@ -82,7 +82,7 @@ if (-not $DryRun) {
     git fetch --prune
     git remote prune origin
     
-    Write-Host "  ✓ Local cleanup complete`n" -ForegroundColor Green
+    Write-Host "  [OK] Local cleanup complete`n" -ForegroundColor Green
 } else {
     Write-Host "  [DRY RUN] Would clean up local branches`n" -ForegroundColor Gray
 }
@@ -92,9 +92,9 @@ Write-Host "MERGE & CLEANUP COMPLETE" -ForegroundColor Cyan
 Write-Host "========================================`n" -ForegroundColor Cyan
 
 if (-not $DryRun) {
-    Write-Host "✓ All PRs merged with squash commits" -ForegroundColor Green
-    Write-Host "✓ Feature branches deleted" -ForegroundColor Green
-    Write-Host "✓ Local repository cleaned up" -ForegroundColor Green
+    Write-Host "[OK] All PRs merged with squash commits" -ForegroundColor Green
+    Write-Host "[OK] Feature branches deleted" -ForegroundColor Green
+    Write-Host "[OK] Local repository cleaned up" -ForegroundColor Green
     Write-Host "`nCurrent branches:" -ForegroundColor Yellow
     git branch -a
 } else {
