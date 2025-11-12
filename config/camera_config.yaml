@@ -1,0 +1,129 @@
+# Camera Configuration
+# This file contains settings for PTZ cameras, RTSP streams, and presets
+
+cameras:
+  # Primary camera configuration
+  - id: camera_1
+    name: "Front Camera"
+    enabled: true
+    
+    # Network settings
+    ip: "192.168.1.107"
+    port: 8080
+    username: "admin"
+    password: "admin"  # Use environment variable CAMERA_PASSWORD in production
+    
+    # Stream configuration
+    stream:
+      # RTSP URL format: rtsp://username:password@ip:port/path
+      rtsp_url: "rtsp://admin:admin@192.168.1.107:554/live"
+      # Alternative: Use HTTP stream if RTSP unavailable
+      http_url: "http://192.168.1.107:8080/video"
+      
+      # Stream settings
+      resolution: [1920, 1080]  # Width x Height
+      fps: 30
+      buffer_size: 30  # Number of frames to buffer
+      
+      # Reconnection settings
+      auto_reconnect: true
+      reconnect_delay: 5  # seconds
+      max_reconnect_attempts: 10
+    
+    # PTZ settings
+    ptz:
+      protocol: "onvif"  # onvif, http_cgi, sdk
+      
+      # Camera capabilities
+      supports_continuous_move: true
+      supports_absolute_move: true
+      supports_relative_move: true
+      
+      # Movement settings
+      default_speed: 0.7  # 0.0 to 1.0
+      smooth_tracking: true
+      
+      # Preset configuration
+      # These should match presets configured in the camera
+      presets:
+        - token: "Preset001"
+          name: "zone_left"
+          description: "Left side coverage area"
+          
+        - token: "Preset002"
+          name: "zone_center"
+          description: "Center/entrance area"
+          
+        - token: "Preset003"
+          name: "zone_right"
+          description: "Right side coverage area"
+          
+        - token: "Preset004"
+          name: "zone_far_left"
+          description: "Far left extended view"
+          
+        - token: "Preset005"
+          name: "zone_far_right"
+          description: "Far right extended view"
+  
+  # Secondary camera (optional)
+  - id: camera_2
+    name: "Back Camera"
+    enabled: false
+    
+    ip: "192.168.1.123"
+    port: 80
+    username: "admin"
+    password: "admin"
+    
+    stream:
+      rtsp_url: "rtsp://admin:admin@192.168.1.123:554/stream1"
+      resolution: [1280, 720]
+      fps: 25
+      buffer_size: 25
+      auto_reconnect: true
+      reconnect_delay: 5
+      max_reconnect_attempts: 10
+    
+    ptz:
+      protocol: "onvif"
+      supports_continuous_move: true
+      supports_absolute_move: true
+      supports_relative_move: false
+      default_speed: 0.6
+      smooth_tracking: true
+      
+      presets:
+        - token: "1"
+          name: "zone_left"
+          description: "Left coverage"
+          
+        - token: "2"
+          name: "zone_center"
+          description: "Center coverage"
+          
+        - token: "3"
+          name: "zone_right"
+          description: "Right coverage"
+
+# Global camera settings
+global:
+  # Video processing
+  process_every_n_frames: 2  # Process every Nth frame to reduce CPU load
+  display_video: false  # Set to true for debugging, false for headless operation
+  
+  # Recording settings
+  enable_recording: false
+  recording_path: "recordings/"
+  record_on_detection: true  # Only record when objects detected
+  max_recording_duration: 300  # seconds (5 minutes)
+  
+  # Performance settings
+  use_gpu: true  # Use GPU for AI inference if available
+  num_threads: 4  # Number of processing threads
+  
+  # Logging
+  log_level: "INFO"  # DEBUG, INFO, WARNING, ERROR
+  log_file: "logs/camera.log"
+  log_ptz_movements: true
+  log_detections: true

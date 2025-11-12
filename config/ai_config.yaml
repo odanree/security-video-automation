@@ -1,0 +1,110 @@
+# AI Model Configuration
+# Settings for object detection and other AI models
+
+object_detection:
+  # Model selection
+  model:
+    # Model type: yolov8, yolov5, tensorflow, mediapipe
+    type: "yolov8"
+    
+    # Model size: n (nano), s (small), m (medium), l (large), x (xlarge)
+    # Smaller models are faster but less accurate
+    # Recommended: n for edge devices, s for general use, m+ for accuracy
+    size: "n"
+    
+    # Model path (will be downloaded if not found)
+    path: "models/yolov8n.pt"
+    
+    # Auto-download model if missing
+    auto_download: true
+  
+  # Inference settings
+  inference:
+    # Device: cpu, cuda, mps (for Apple Silicon)
+    device: "cpu"  # Change to "cuda" if GPU available
+    
+    # Batch processing
+    batch_size: 1  # Number of frames to process at once
+    
+    # Half precision (FP16) for faster inference on GPU
+    half_precision: false
+    
+    # Image preprocessing
+    input_size: 640  # Model input size (width and height)
+    
+    # Confidence thresholds
+    confidence_threshold: 0.6  # Minimum confidence to accept detection
+    iou_threshold: 0.45  # IoU threshold for NMS (Non-Maximum Suppression)
+    
+    # Maximum detections per image
+    max_detections: 100
+  
+  # Class filtering
+  classes:
+    # COCO dataset class IDs (0-79)
+    # 0: person, 1: bicycle, 2: car, 3: motorcycle, 5: bus, 7: truck, etc.
+    # Leave empty to detect all classes, or specify IDs to filter
+    enabled_classes: []  # Empty = all classes
+    
+    # Class-specific confidence thresholds
+    class_thresholds:
+      person: 0.6
+      car: 0.7
+      truck: 0.7
+      bicycle: 0.5
+      motorcycle: 0.6
+  
+  # Performance optimization
+  performance:
+    # Skip frames for detection (detect every Nth frame)
+    skip_frames: 1  # 1 = detect every frame, 2 = every other frame
+    
+    # Multi-threading
+    num_threads: 4
+    
+    # Memory management
+    max_memory_mb: 2048  # Maximum memory usage
+    
+    # Cache preprocessed frames
+    cache_frames: false
+  
+  # Post-processing
+  post_processing:
+    # Non-Maximum Suppression (NMS)
+    enable_nms: true
+    nms_method: "default"  # default, soft, fast
+    
+    # Tracking
+    enable_tracking: true
+    tracker_type: "bytetrack"  # bytetrack, botsort, ocsort
+    
+    # Size filtering
+    min_box_area: 400  # Minimum bounding box area (pixels)
+    max_box_area: 500000  # Maximum bounding box area
+    
+    # Aspect ratio filtering
+    min_aspect_ratio: 0.2
+    max_aspect_ratio: 5.0
+
+# Face detection (future feature)
+face_detection:
+  enabled: false
+  model: "mediapipe"
+  blur_faces: false  # Privacy protection
+
+# License plate recognition (future feature)
+license_plate:
+  enabled: false
+  model: "paddleocr"
+  
+# Pose estimation (future feature)
+pose_estimation:
+  enabled: false
+  model: "yolov8-pose"
+
+# Model training (future feature)
+training:
+  enabled: false
+  custom_dataset_path: ""
+  epochs: 100
+  batch_size: 16
