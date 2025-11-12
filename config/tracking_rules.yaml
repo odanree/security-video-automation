@@ -1,0 +1,226 @@
+# Tracking Rules Configuration
+# This file defines how the system tracks objects and triggers PTZ movements
+
+tracking:
+  # Enable/disable tracking system
+  enabled: true
+  
+  # Tracking mode: AUTO, MANUAL, ASSISTED
+  mode: "AUTO"
+  
+  # Target object classes to track
+  # Available: person, bicycle, car, motorcycle, airplane, bus, train, truck, boat, etc.
+  # See COCO dataset for full list of 80 classes
+  target_classes:
+    - "person"
+    - "car"
+    - "truck"
+    - "bicycle"
+    - "motorcycle"
+  
+  # Object detection settings
+  detection:
+    # Minimum confidence threshold (0.0 to 1.0)
+    min_confidence: 0.6
+    
+    # Minimum object size in pixels (width or height)
+    min_object_size: 50
+    
+    # Maximum number of objects to track simultaneously
+    max_tracked_objects: 10
+    
+    # Ignore stationary objects after N frames
+    ignore_stationary: false
+    stationary_threshold: 30  # frames
+  
+  # Motion tracking settings
+  motion:
+    # Position history length (number of frames)
+    history_length: 30
+    
+    # Minimum movement to detect direction (pixels)
+    movement_threshold: 50
+    
+    # Velocity smoothing (higher = smoother but slower response)
+    smoothing_factor: 0.3
+    
+    # Displacement calculation method: absolute, relative
+    displacement_method: "absolute"
+  
+  # Tracking zones
+  # Zones define areas of the frame and their corresponding camera presets
+  zones:
+    - name: "zone_left"
+      # x_range and y_range are fractions of frame dimensions (0.0 to 1.0)
+      x_range: [0.0, 0.33]
+      y_range: [0.0, 1.0]
+      preset: "Preset001"
+      priority: 1
+      
+    - name: "zone_center"
+      x_range: [0.33, 0.66]
+      y_range: [0.0, 1.0]
+      preset: "Preset002"
+      priority: 2
+      
+    - name: "zone_right"
+      x_range: [0.66, 1.0]
+      y_range: [0.0, 1.0]
+      preset: "Preset003"
+      priority: 1
+      
+    - name: "zone_far_left"
+      x_range: [0.0, 0.15]
+      y_range: [0.0, 1.0]
+      preset: "Preset004"
+      priority: 3
+      
+    - name: "zone_far_right"
+      x_range: [0.85, 1.0]
+      y_range: [0.0, 1.0]
+      preset: "Preset005"
+      priority: 3
+  
+  # Direction-based triggers
+  # Define which directions trigger PTZ movements
+  direction_triggers:
+    # When object moves right to left, move camera to left zone
+    right_to_left:
+      enabled: true
+      target_zones: ["zone_left", "zone_far_left"]
+      min_displacement: 100  # pixels
+      min_velocity: 10  # pixels per frame
+      
+    # When object moves left to right, move camera to right zone
+    left_to_right:
+      enabled: true
+      target_zones: ["zone_right", "zone_far_right"]
+      min_displacement: 100
+      min_velocity: 10
+      
+    # Vertical movement triggers (optional)
+    top_to_bottom:
+      enabled: false
+      target_zones: []
+      min_displacement: 100
+      min_velocity: 10
+      
+    bottom_to_top:
+      enabled: false
+      target_zones: []
+      min_displacement: 100
+      min_velocity: 10
+  
+  # PTZ movement settings
+  ptz:
+    # Enable PTZ control
+    enable_ptz: true
+    
+    # Movement speed (0.0 to 1.0)
+    movement_speed: 0.7
+    
+    # Cooldown between movements (seconds)
+    cooldown_time: 3.0
+    
+    # Anticipatory tracking: move camera before object reaches edge
+    anticipatory_tracking: true
+    anticipation_distance: 0.2  # Fraction of zone width
+    
+    # Return to home position after inactivity
+    auto_return_home: true
+    home_preset: "Preset002"  # zone_center
+    inactivity_timeout: 60  # seconds
+    
+    # Maximum PTZ movements per minute (rate limiting)
+    max_movements_per_minute: 20
+  
+  # Filters and exclusions
+  filters:
+    # Ignore objects in these zones (privacy zones)
+    privacy_zones: []
+    # Example:
+    # - name: "doorway"
+    #   x_range: [0.4, 0.6]
+    #   y_range: [0.0, 0.3]
+    
+    # Time-based filters
+    time_based:
+      enabled: false
+      # Only track during these hours (24-hour format)
+      active_hours:
+        start: "06:00"
+        end: "22:00"
+      # Different rules for night mode
+      night_mode:
+        enabled: false
+        min_confidence: 0.7  # Higher confidence at night
+        target_classes: ["person"]  # Only track people at night
+  
+  # Event recording
+  events:
+    # Enable event logging
+    enable_logging: true
+    
+    # Log file path
+    log_file: "logs/tracking_events.log"
+    
+    # Event types to log
+    log_detections: true
+    log_tracking: true
+    log_ptz_movements: true
+    log_zone_changes: true
+    
+    # Save events to database (future feature)
+    save_to_database: false
+    
+    # Event retention (days)
+    retention_days: 7
+  
+  # Notifications (future feature)
+  notifications:
+    enabled: false
+    
+    # Email notifications
+    email:
+      enabled: false
+      smtp_server: "smtp.gmail.com"
+      smtp_port: 587
+      from_address: "camera@example.com"
+      to_addresses: ["user@example.com"]
+      on_detection: false
+      on_tracking: false
+      
+    # Webhook notifications
+    webhook:
+      enabled: false
+      url: "https://example.com/webhook"
+      on_detection: false
+      on_tracking: true
+  
+  # Advanced settings
+  advanced:
+    # Subject selection strategy when multiple objects detected
+    # Options: largest, closest_to_center, highest_confidence, fastest_moving
+    subject_selection: "closest_to_center"
+    
+    # Track persistence: continue tracking even if object temporarily lost
+    track_persistence: true
+    persistence_frames: 15  # Number of frames to wait
+    
+    # Occlusion handling
+    handle_occlusions: true
+    max_occlusion_frames: 10
+    
+    # Multi-camera coordination (future feature)
+    multi_camera:
+      enabled: false
+      handoff_enabled: false  # Pass tracking between cameras
+      
+    # Debug visualization
+    debug:
+      draw_bounding_boxes: true
+      draw_tracking_lines: true
+      draw_zone_boundaries: true
+      draw_direction_arrows: true
+      show_confidence: true
+      show_object_id: true
