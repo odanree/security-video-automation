@@ -70,3 +70,7 @@ desktop.ini
 recordings/
 screenshots/
 output/
+
+# Configuration with sensitive data
+config/camera_config.yaml
+config/*.local.yaml
