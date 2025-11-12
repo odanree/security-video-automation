@@ -231,9 +231,8 @@ def run_tracking_system(
     """
     stream = components['stream']
     tracking_engine = components['tracking_engine']
-    global_settings = components['global_settings']
     
-    # Start tracking engine
+    # Start tracking engine (runs in its own thread)
     tracking_engine.start()
     logger.info("=" * 60)
     logger.info("TRACKING SYSTEM STARTED")
@@ -241,35 +240,27 @@ def run_tracking_system(
     logger.info("Press 'q' to quit, 'p' to pause/resume, 's' for stats")
     
     start_time = time.time()
-    frame_count = 0
     last_stats_time = start_time
     stats_interval = 10  # Print stats every 10 seconds
     
-    process_every_n = global_settings.get('process_every_n_frames', 2)
-    
     try:
-        while True:
+        while tracking_engine.running:
             # Check duration
             if duration and (time.time() - start_time) > duration:
                 logger.info(f"Duration limit reached ({duration}s)")
                 break
             
-            # Read frame
-            try:
-                frame = stream.read()
-            except Exception as e:
-                logger.error(f"Failed to read frame: {e}")
-                time.sleep(1)
-                continue
-            
-            frame_count += 1
-            
-            # Process every Nth frame
-            if frame_count % process_every_n == 0:
-                tracking_engine.process_frame(frame)
-            
             # Display video (optional)
             if display_video:
+                # Read frame for display only
+                try:
+                    frame = stream.read(timeout=0.1)
+                    if frame is None:
+                        continue
+                except:
+                    time.sleep(0.1)
+                    continue
+                
                 # Draw detections and tracking info on frame
                 display_frame = frame.copy()
                 
@@ -314,14 +305,15 @@ def run_tracking_system(
                     logger.info("Quit requested by user")
                     break
                 elif key == ord('p'):
-                    if tracking_engine.is_paused:
+                    if tracking_engine.paused:
                         tracking_engine.resume()
-                        logger.info("Tracking resumed")
                     else:
                         tracking_engine.pause()
-                        logger.info("Tracking paused")
                 elif key == ord('s'):
                     print_statistics(tracking_engine, logger)
+            else:
+                # No display - just wait
+                time.sleep(0.1)
             
             # Print periodic statistics
             if time.time() - last_stats_time >= stats_interval:
@@ -336,7 +328,6 @@ def run_tracking_system(
         logger.info("Shutting down tracking system...")
         
         tracking_engine.stop()
-        stream.stop()
         
         if display_video:
             cv2.destroyAllWindows()
@@ -348,9 +339,11 @@ def run_tracking_system(
         print_statistics(tracking_engine, logger)
         
         elapsed_time = time.time() - start_time
+        stats = tracking_engine.get_statistics()
         logger.info(f"Total runtime: {elapsed_time:.1f} seconds")
-        logger.info(f"Total frames: {frame_count}")
-        logger.info(f"Average FPS: {frame_count / elapsed_time:.1f}")
+        logger.info(f"Total frames: {stats['frames_processed']}")
+        if elapsed_time > 0:
+            logger.info(f"Average FPS: {stats['frames_processed'] / elapsed_time:.1f}")
         
         logger.info("\nSystem shutdown complete")
 
