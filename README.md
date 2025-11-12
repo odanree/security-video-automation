@@ -123,6 +123,23 @@ python src/main.py --display --no-ptz
 - `p` - Pause/resume tracking
 - `s` - Show statistics
 
+**Option 3: Web Dashboard** 🌐 (Recommended for Monitoring)
+```bash
+# Start web dashboard server
+cd src/web
+uvicorn app:app --reload --host 0.0.0.0 --port 8000
+```
+
+Then open your browser to `http://localhost:8000`
+
+**Dashboard Features:**
+- 📹 **Live Video Stream** - Real-time MJPEG stream with AI detection overlays
+- 📊 **Statistics Dashboard** - Total detections, active tracks, events, FPS
+- 🎮 **Manual PTZ Control** - Directional pad and preset selection
+- ⚡ **Real-Time Updates** - WebSocket connection for live statistics
+- 📝 **Event Log** - Track all detections with timestamps and confidence scores
+- 🎯 **Tracking Toggle** - Start/stop automated tracking with one click
+
 **See [RUNNING.md](docs/RUNNING.md) for detailed usage instructions.**
 
 ## 📋 Project Structure
