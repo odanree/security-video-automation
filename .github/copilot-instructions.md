@@ -4,6 +4,43 @@
 
 This project integrates **AI-powered video analysis** with **PTZ (Pan-Tilt-Zoom) camera control** to automatically track subjects moving through the camera's field of view. The system detects motion direction (e.g., right-to-left movement) and triggers camera preset positions to maintain visual tracking of subjects.
 
+## Development Environment
+
+### Windows PowerShell Virtual Environment
+
+**CRITICAL:** This project uses a Python virtual environment (venv). Always ensure venv is activated before running Python commands.
+
+**Check if venv is active:**
+```powershell
+# Look for (venv) in prompt
+(venv) PS C:\Users\Danh\Desktop\security-video-automation>
+```
+
+**Activate venv:**
+```powershell
+venv\Scripts\activate
+```
+
+**Run Python scripts (choose one method):**
+
+**Method 1: With venv activated (preferred)**
+```powershell
+venv\Scripts\activate
+python src/main.py
+```
+
+**Method 2: Full path to venv python (if activation fails)**
+```powershell
+C:\Users\Danh\Desktop\security-video-automation\venv\Scripts\python.exe src/main.py
+```
+
+**Method 3: Using relative path**
+```powershell
+.\venv\Scripts\python.exe src/main.py
+```
+
+**Never use:** `python` alone without venv - it may use system Python or fail with "Python not found"
+
 ## Architecture
 
 ### Core Components
@@ -1307,6 +1344,7 @@ services:
 - **Keep root directory clean** - Place files in appropriate subfolders
 - **Use absolute imports** from `src/` package
 - **Create `__init__.py`** in every Python package folder
+- **Check virtual environment before running Python scripts** - Always verify venv is activated before executing Python commands in terminal
 
 ### DON'T:
 - Hardcode camera credentials
@@ -1320,6 +1358,7 @@ services:
 - **Put source code in root directory** - Use `src/`, `scripts/`, `tests/`
 - **Create files without considering folder structure**
 - **Mix concerns** - Keep config separate from code
+- **Run Python scripts without checking venv** - Use full path to venv Python or verify activation first
 
 ### File Creation Checklist
 
