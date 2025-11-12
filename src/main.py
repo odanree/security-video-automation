@@ -107,7 +107,7 @@ def initialize_components(config_loader: ConfigLoader, logger: logging.Logger) -
     # Test PTZ connection
     try:
         status = ptz_controller.get_status()
-        logger.info(f"✓ PTZ controller connected")
+        logger.info("PTZ controller connected")
     except Exception as e:
         logger.warning(f"PTZ controller connection failed: {e}")
         logger.warning("Continuing without PTZ control...")
@@ -121,7 +121,7 @@ def initialize_components(config_loader: ConfigLoader, logger: logging.Logger) -
     
     try:
         stream.start()
-        logger.info(f"✓ Video stream started: {rtsp_url}")
+        logger.info(f"Video stream started: {rtsp_url}")
     except Exception as e:
         logger.error(f"Failed to start video stream: {e}")
         raise
@@ -138,7 +138,7 @@ def initialize_components(config_loader: ConfigLoader, logger: logging.Logger) -
         confidence_threshold=confidence
     )
     
-    logger.info(f"✓ Object detector loaded: {model_path}")
+    logger.info(f"Object detector loaded: {model_path}")
     logger.info(f"  Device: {device}")
     logger.info(f"  Confidence threshold: {confidence}")
     
@@ -152,7 +152,7 @@ def initialize_components(config_loader: ConfigLoader, logger: logging.Logger) -
         movement_threshold=movement_threshold
     )
     
-    logger.info(f"✓ Motion tracker initialized")
+    logger.info("Motion tracker initialized")
     
     # Build tracking configuration
     logger.info("Building tracking configuration...")
@@ -163,11 +163,11 @@ def initialize_components(config_loader: ConfigLoader, logger: logging.Logger) -
             name=zone_config['name'],
             x_range=tuple(zone_config['x_range']),
             y_range=tuple(zone_config['y_range']),
-            preset=zone_config['preset'],
+            preset_token=zone_config['preset'],
             priority=zone_config.get('priority', 1)
         )
         tracking_zones.append(zone)
-        logger.info(f"  Zone: {zone.name} -> Preset {zone.preset}")
+        logger.info(f"  Zone: {zone.name} -> Preset {zone.preset_token}")
     
     # Direction triggers
     direction_triggers = {}
@@ -183,8 +183,7 @@ def initialize_components(config_loader: ConfigLoader, logger: logging.Logger) -
         min_confidence=tracking_config.detection.get('min_confidence', 0.6),
         movement_threshold=movement_threshold,
         cooldown_time=tracking_config.ptz.get('cooldown_time', 3.0),
-        direction_triggers=direction_triggers,
-        mode=TrackingMode[tracking_config.mode.upper()]
+        direction_triggers=direction_triggers
     )
     
     # Initialize tracking engine
@@ -194,10 +193,11 @@ def initialize_components(config_loader: ConfigLoader, logger: logging.Logger) -
         detector=detector,
         ptz_controller=ptz_controller,
         motion_tracker=motion_tracker,
+        stream_handler=stream,
         config=tracking_cfg
     )
     
-    logger.info(f"✓ Tracking engine initialized")
+    logger.info("Tracking engine initialized")
     logger.info(f"  Mode: {tracking_config.mode}")
     logger.info(f"  Target classes: {', '.join(tracking_config.target_classes)}")
     logger.info(f"  Zones: {len(tracking_zones)}")
@@ -274,8 +274,9 @@ def run_tracking_system(
                 display_frame = frame.copy()
                 
                 # Get latest events
-                if tracking_engine.events:
-                    latest = tracking_engine.events[-1]
+                completed_events = tracking_engine.get_completed_events()
+                if completed_events:
+                    latest = completed_events[-1]
                     
                     # Draw detection boxes
                     for detection in latest.detections:
@@ -351,7 +352,7 @@ def run_tracking_system(
         logger.info(f"Total frames: {frame_count}")
         logger.info(f"Average FPS: {frame_count / elapsed_time:.1f}")
         
-        logger.info("\n✓ System shutdown complete")
+        logger.info("\nSystem shutdown complete")
 
 
 def print_statistics(tracking_engine: TrackingEngine, logger: logging.Logger) -> None:
@@ -360,13 +361,14 @@ def print_statistics(tracking_engine: TrackingEngine, logger: logging.Logger) ->
     
     logger.info("\nTracking Statistics:")
     logger.info(f"  Frames processed: {stats['frames_processed']}")
-    logger.info(f"  Total detections: {stats['total_detections']}")
-    logger.info(f"  Total tracks: {stats['total_tracks']}")
+    logger.info(f"  Total detections: {stats['detections']}")
+    logger.info(f"  Total tracks: {stats['tracks']}")
     logger.info(f"  PTZ movements: {stats['ptz_movements']}")
-    logger.info(f"  Events recorded: {len(tracking_engine.events)}")
+    logger.info(f"  Active events: {stats['active_events']}")
+    logger.info(f"  Completed events: {stats['completed_events']}")
     
     if stats['frames_processed'] > 0:
-        logger.info(f"  Avg detections/frame: {stats['total_detections'] / stats['frames_processed']:.2f}")
+        logger.info(f"  Avg detections/frame: {stats['detections'] / stats['frames_processed']:.2f}")
 
 
 def main():

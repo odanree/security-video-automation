@@ -11,12 +11,13 @@ cameras:
     ip: "192.168.1.107"
     port: 8080
     username: "admin"
-    password: "admin"  # Use environment variable CAMERA_PASSWORD in production
+    password: "Windows98"  # Use environment variable CAMERA_PASSWORD in production
     
     # Stream configuration
     stream:
       # RTSP URL format: rtsp://username:password@ip:port/path
-      rtsp_url: "rtsp://admin:admin@192.168.1.107:554/live"
+      # Obtained from camera via ONVIF GetStreamUri
+      rtsp_url: "rtsp://admin:Windows98@192.168.1.107:554/11"
       # Alternative: Use HTTP stream if RTSP unavailable
       http_url: "http://192.168.1.107:8080/video"
       
