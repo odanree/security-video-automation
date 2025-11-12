@@ -92,15 +92,38 @@
    python scripts/discover_camera.py 192.168.1.100
    ```
 
-### Basic Usage
+### Running the System
 
+**Option 1: Interactive Runner (Easiest)**
 ```bash
-# Run the tracking system
+python run.py
+```
+Select from menu options (display mode, headless, debug, etc.)
+
+**Option 2: Direct Execution**
+```bash
+# Basic usage (headless)
 python src/main.py
 
-# Run with web dashboard
-uvicorn src.web.app:app --reload --host 0.0.0.0 --port 8000
+# With video display
+python src/main.py --display
+
+# Debug mode
+python src/main.py --log-level DEBUG --display
+
+# Run for 60 seconds
+python src/main.py --display --duration 60
+
+# Detection only (no PTZ control)
+python src/main.py --display --no-ptz
 ```
+
+**Keyboard Controls** (when `--display` is enabled):
+- `q` - Quit
+- `p` - Pause/resume tracking
+- `s` - Show statistics
+
+**See [RUNNING.md](docs/RUNNING.md) for detailed usage instructions.**
 
 ## 📋 Project Structure
 
