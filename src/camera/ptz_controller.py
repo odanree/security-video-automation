@@ -465,22 +465,41 @@ class PTZController:
             
             status = self.ptz_service.GetStatus(request)
             
-            return {
-                'position': {
-                    'pan': status.Position.PanTilt.x,
-                    'tilt': status.Position.PanTilt.y,
-                    'zoom': status.Position.Zoom.x
-                },
-                'move_status': {
-                    'pan_tilt': status.MoveStatus.PanTilt if hasattr(status, 'MoveStatus') else 'UNKNOWN',
-                    'zoom': status.MoveStatus.Zoom if hasattr(status, 'MoveStatus') else 'UNKNOWN'
-                },
-                'utc_time': status.UTCTime if hasattr(status, 'UTCTime') else None
-            }
+            # Handle cameras that don't provide position status
+            result = {}
+            
+            if status and hasattr(status, 'Position') and status.Position:
+                if hasattr(status.Position, 'PanTilt') and status.Position.PanTilt:
+                    result['position'] = {
+                        'pan': status.Position.PanTilt.x if hasattr(status.Position.PanTilt, 'x') else 0.0,
+                        'tilt': status.Position.PanTilt.y if hasattr(status.Position.PanTilt, 'y') else 0.0,
+                        'zoom': status.Position.Zoom.x if hasattr(status.Position, 'Zoom') and status.Position.Zoom else 0.0
+                    }
+                else:
+                    result['position'] = {'pan': 0.0, 'tilt': 0.0, 'zoom': 0.0}
+            else:
+                result['position'] = {'pan': 0.0, 'tilt': 0.0, 'zoom': 0.0}
+            
+            if hasattr(status, 'MoveStatus') and status.MoveStatus:
+                result['move_status'] = {
+                    'pan_tilt': status.MoveStatus.PanTilt if hasattr(status.MoveStatus, 'PanTilt') else 'UNKNOWN',
+                    'zoom': status.MoveStatus.Zoom if hasattr(status.MoveStatus, 'Zoom') else 'UNKNOWN'
+                }
+            else:
+                result['move_status'] = {'pan_tilt': 'UNKNOWN', 'zoom': 'UNKNOWN'}
+            
+            result['utc_time'] = status.UTCTime if hasattr(status, 'UTCTime') else None
+            
+            return result
             
         except Exception as e:
             logger.error(f"Failed to get status: {e}")
-            return {}
+            # Return default values instead of empty dict
+            return {
+                'position': {'pan': 0.0, 'tilt': 0.0, 'zoom': 0.0},
+                'move_status': {'pan_tilt': 'UNKNOWN', 'zoom': 'UNKNOWN'},
+                'utc_time': None
+            }
     
     def home(self) -> bool:
         """
