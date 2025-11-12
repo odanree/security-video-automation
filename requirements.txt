@@ -1,0 +1,35 @@
+# Core dependencies
+opencv-python==4.8.1.78
+numpy==1.24.3
+python-dotenv==1.0.0
+
+# AI/ML
+ultralytics==8.1.0  # YOLOv8
+torch==2.1.0
+torchvision==0.16.0
+
+# Camera control
+onvif-zeep==0.2.12
+requests==2.31.0
+
+# Web framework (optional)
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+websockets==12.0
+python-multipart==0.0.6
+
+# Configuration
+pyyaml==6.0.1
+
+# Testing
+pytest==7.4.3
+pytest-cov==4.1.0
+pytest-asyncio==0.21.1
+
+# Code quality
+black==23.11.0
+flake8==6.1.0
+mypy==1.7.0
+
+# Utilities
+Pillow==10.1.0

@@ -1,0 +1,38 @@
+services:
+  # Main web service
+  - type: web
+    name: security-camera-ai
+    env: python
+    region: oregon
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn src.web.app:app --host 0.0.0.0 --port $PORT
+    
+    envVars:
+      - key: CAMERA_IP
+        sync: false
+      - key: CAMERA_USERNAME
+        sync: false
+      - key: CAMERA_PASSWORD
+        sync: false
+      - key: RTSP_URL
+        sync: false
+      - key: YOLO_MODEL
+        value: yolov8n.pt
+      - key: CONFIDENCE_THRESHOLD
+        value: "0.6"
+      - key: DEMO_MODE
+        value: "True"
+      - key: DEBUG
+        value: "False"
+    
+    healthCheckPath: /health
+    
+  # Optional: Background worker for tracking (if needed)
+  # - type: worker
+  #   name: tracking-worker
+  #   env: python
+  #   buildCommand: pip install -r requirements.txt
+  #   startCommand: python src/main.py
+  #   envVars:
+  #     - fromGroup: camera-settings
