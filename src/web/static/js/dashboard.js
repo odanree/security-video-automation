@@ -80,16 +80,20 @@ class Dashboard {
     
     updateConnectionStatus(connected) {
         const statusDot = document.getElementById('connection-status');
-        const statusText = document.getElementById('status-text');
+        const statusText = document.getElementById('connection-text');
         
-        if (connected) {
-            statusDot.classList.remove('offline');
-            statusDot.classList.add('online');
-            statusText.textContent = 'Connected';
-        } else {
-            statusDot.classList.remove('online');
-            statusDot.classList.add('offline');
-            statusText.textContent = 'Disconnected';
+        if (statusDot) {
+            if (connected) {
+                statusDot.classList.remove('offline');
+                statusDot.classList.add('online');
+            } else {
+                statusDot.classList.remove('online');
+                statusDot.classList.add('offline');
+            }
+        }
+        
+        if (statusText) {
+            statusText.textContent = connected ? 'Connected' : 'Disconnected';
         }
     }
     
@@ -144,10 +148,15 @@ class Dashboard {
     updateStatistics(data) {
         console.log('Updating statistics:', data);
         
-        // Update stat cards - map backend keys to DOM elements
-        document.getElementById('stat-detections').textContent = data.detections || 0;
-        document.getElementById('stat-tracks').textContent = data.tracks || 0;
-        document.getElementById('stat-events').textContent = data.completed_events || 0;
+        // Update stat cards - map backend keys to DOM elements with null checks
+        const detectionsEl = document.getElementById('stat-detections');
+        if (detectionsEl) detectionsEl.textContent = data.detections || 0;
+        
+        const tracksEl = document.getElementById('stat-tracks');
+        if (tracksEl) tracksEl.textContent = data.tracks || 0;
+        
+        const eventsEl = document.getElementById('stat-events');
+        if (eventsEl) eventsEl.textContent = data.completed_events || 0;
         
         // Display additional stats if available
         const fpsElement = document.getElementById('stat-fps');
@@ -177,10 +186,15 @@ class Dashboard {
             const response = await fetch('/api/status');
             const data = await response.json();
             
-            // Update system info
-            document.getElementById('camera-status').textContent = data.camera_connected ? '✓ Connected' : '✗ Disconnected';
-            document.getElementById('ai-status').textContent = data.ai_model_loaded ? '✓ Loaded' : '✗ Not Loaded';
-            document.getElementById('ptz-status').textContent = data.ptz_enabled ? '✓ Enabled' : '✗ Disabled';
+            // Update system info with null checks
+            const cameraStatusEl = document.getElementById('camera-status');
+            if (cameraStatusEl) cameraStatusEl.textContent = data.camera_connected ? '✓ Connected' : '✗ Disconnected';
+            
+            const aiStatusEl = document.getElementById('ai-status');
+            if (aiStatusEl) aiStatusEl.textContent = data.ai_model_loaded ? '✓ Loaded' : '✗ Not Loaded';
+            
+            const ptzStatusEl = document.getElementById('ptz-status');
+            if (ptzStatusEl) ptzStatusEl.textContent = data.ptz_enabled ? '✓ Enabled' : '✗ Disabled';
             
             // Update tracking status
             this.isTracking = data.tracking_active;
@@ -342,26 +356,30 @@ class Dashboard {
             const data = await response.json();
             
             const eventsContainer = document.getElementById('events-container');
+            if (!eventsContainer) return;
             
-            if (data.events.length === 0) {
+            // Handle missing events array
+            const events = data.events || data || [];
+            
+            if (!Array.isArray(events) || events.length === 0) {
                 eventsContainer.innerHTML = '<p class="no-events">No events recorded yet</p>';
                 return;
             }
             
-            eventsContainer.innerHTML = data.events.map(event => `
+            eventsContainer.innerHTML = events.map(event => `
                 <div class="event-item">
                     <div class="event-header">
-                        <strong>${event.type}</strong>
+                        <strong>${event.type || 'Unknown'}</strong>
                         <span class="event-time">${this.formatTime(event.timestamp)}</span>
                     </div>
                     <div class="event-details">
                         <div class="event-detail">
                             <span class="event-detail-label">Class:</span>
-                            <span>${event.class_name}</span>
+                            <span>${event.class_name || 'N/A'}</span>
                         </div>
                         <div class="event-detail">
                             <span class="event-detail-label">Confidence:</span>
-                            <span>${(event.confidence * 100).toFixed(1)}%</span>
+                            <span>${(event.confidence * 100).toFixed(1) || 'N/A'}%</span>
                         </div>
                         <div class="event-detail">
                             <span class="event-detail-label">Direction:</span>
