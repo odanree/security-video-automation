@@ -1189,6 +1189,28 @@ def dahua_goto_preset(ip: str, username: str, password: str, preset_id: int):
 
 ## Git Workflow & Commits
 
+### ⚠️ CRITICAL: Test Before Committing
+
+**NEVER commit changes without testing first.** This prevents broken code from entering the repository.
+
+**Testing Workflow:**
+1. Make changes to code
+2. **Restart dashboard or service** - Ensure changes are loaded
+3. **Test functionality** - Verify changes work as intended
+4. **Only then commit** - After verification
+
+**Example:** If optimizing WebSocket latency:
+1. Edit `src/web/app.py`
+2. Restart dashboard: `taskkill /F /IM python.exe; .\restart_dashboard.ps1`
+3. Open http://localhost:8000 and test latency
+4. Verify improvements work
+5. **THEN** commit with: `git commit -m "perf(stream): reduce latency..."`
+
+**If changes break functionality:**
+- Revert: `git checkout -- <file>`
+- Or create new branch and abandon old changes
+- Never commit broken code
+
 ### Branch Strategy
 **NEVER commit directly to `main`**. Always use feature branches and Pull Requests.
 
