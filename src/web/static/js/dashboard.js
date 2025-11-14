@@ -41,13 +41,21 @@ class Dashboard {
         };
         
         this.ws.onmessage = (event) => {
-            const message = JSON.parse(event.data);
-            
-            // Handle different message types
-            if (message.type === 'statistics') {
-                this.updateStatistics(message.data);
-            } else if (message.type === 'event') {
-                this.addEventLog(message.data);
+            console.log('WebSocket message received:', event.data);
+            try {
+                const message = JSON.parse(event.data);
+                console.log('Parsed message:', message);
+                
+                // Handle different message types
+                if (message.type === 'statistics') {
+                    console.log('Statistics message:', message.data);
+                    this.updateStatistics(message.data);
+                } else if (message.type === 'event') {
+                    console.log('Event message:', message.data);
+                    this.addEventLog(message.data);
+                }
+            } catch (e) {
+                console.error('Error parsing WebSocket message:', e);
             }
         };
         
@@ -373,6 +381,20 @@ class Dashboard {
     // ========================================================================
     
     startPolling() {
+        // Poll statistics every 2 seconds as fallback
+        setInterval(async () => {
+            try {
+                const response = await fetch('/api/statistics');
+                if (response.ok) {
+                    const data = await response.json();
+                    console.log('Polled statistics:', data);
+                    this.updateStatistics(data);
+                }
+            } catch (e) {
+                console.error('Error polling statistics:', e);
+            }
+        }, 2000);
+        
         // Reload events every 5 seconds
         setInterval(() => this.loadEvents(), 5000);
         
