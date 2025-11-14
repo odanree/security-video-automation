@@ -134,6 +134,8 @@ class Dashboard {
     // ========================================================================
     
     updateStatistics(data) {
+        console.log('Updating statistics:', data);
+        
         // Update stat cards - map backend keys to DOM elements
         document.getElementById('stat-detections').textContent = data.detections || 0;
         document.getElementById('stat-tracks').textContent = data.tracks || 0;

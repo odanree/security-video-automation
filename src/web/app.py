@@ -423,10 +423,25 @@ async def websocket_endpoint(websocket: WebSocket):
             # Send statistics every second
             if tracking_engine:
                 stats = tracking_engine.get_statistics()
-                await websocket.send_json({
-                    "type": "statistics",
-                    "data": stats
-                })
+            else:
+                # Send default stats if tracking engine not initialized
+                stats = {
+                    'frames_processed': 0,
+                    'detections': 0,
+                    'tracks': 0,
+                    'ptz_movements': 0,
+                    'active_events': 0,
+                    'completed_events': 0,
+                    'current_preset': None,
+                    'is_running': False,
+                    'is_paused': False,
+                    'mode': 'idle'
+                }
+            
+            await websocket.send_json({
+                "type": "statistics",
+                "data": stats
+            })
             
             await asyncio.sleep(1)
             
