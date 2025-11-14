@@ -387,7 +387,7 @@ class Dashboard {
         }
     }
     
-    async movePTZContinuous(panVelocity, tiltVelocity, duration) {
+    async movePTZContinuous(panVelocity, tiltVelocity, duration = 0.3) {
         try {
             const response = await fetch('/api/camera/move', {
                 method: 'POST',
@@ -404,6 +404,21 @@ class Dashboard {
             }
         } catch (error) {
             console.error('PTZ move error:', error);
+        }
+    }
+    
+    async stopPTZ() {
+        try {
+            const response = await fetch('/api/camera/stop', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
+            });
+            
+            if (!response.ok) {
+                throw new Error('Stop failed');
+            }
+        } catch (error) {
+            console.error('PTZ stop error:', error);
         }
     }
     
@@ -519,16 +534,37 @@ class Dashboard {
         // Video controls - correct IDs
         document.getElementById('btn-fullscreen')?.addEventListener('click', () => this.toggleFullscreen());
         
-        // PTZ dpad controls - use data attributes
+        // PTZ dpad controls - use mousedown for instant response
         document.querySelectorAll('.dpad-btn').forEach(btn => {
-            btn.addEventListener('click', (e) => {
+            let moveInterval = null;
+            
+            // Start moving on mousedown
+            btn.addEventListener('mousedown', (e) => {
                 const pan = parseFloat(e.target.dataset.pan || 0);
                 const tilt = parseFloat(e.target.dataset.tilt || 0);
                 
                 if (pan !== 0 || tilt !== 0) {
-                    this.movePTZContinuous(pan, tilt, 0.5);
+                    // Immediate first move
+                    this.movePTZContinuous(pan, tilt, 0.2);
+                    
+                    // Continue moving while held down
+                    moveInterval = setInterval(() => {
+                        this.movePTZContinuous(pan, tilt, 0.2);
+                    }, 200);
                 }
             });
+            
+            // Stop on mouseup or mouseleave
+            const stopMove = () => {
+                if (moveInterval) {
+                    clearInterval(moveInterval);
+                    moveInterval = null;
+                    this.stopPTZ();
+                }
+            };
+            
+            btn.addEventListener('mouseup', stopMove);
+            btn.addEventListener('mouseleave', stopMove);
         });
         
         // Preset selection

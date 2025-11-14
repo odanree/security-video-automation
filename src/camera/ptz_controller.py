@@ -171,7 +171,8 @@ class PTZController:
         pan_velocity: float,
         tilt_velocity: float,
         zoom_velocity: float = 0.0,
-        duration: float = 1.0
+        duration: float = 0.5,
+        blocking: bool = False
     ) -> bool:
         """
         Continuous pan/tilt/zoom movement
@@ -180,17 +181,18 @@ class PTZController:
             pan_velocity: -1.0 (left) to 1.0 (right)
             tilt_velocity: -1.0 (down) to 1.0 (up)
             zoom_velocity: -1.0 (zoom out) to 1.0 (zoom in)
-            duration: Movement duration in seconds
+            duration: Movement duration in seconds (used only if blocking=True)
+            blocking: If True, waits for duration and stops. If False, returns immediately
             
         Returns:
             True if successful, False otherwise
             
         Example:
-            # Pan right for 2 seconds
-            ptz.continuous_move(pan_velocity=0.5, tilt_velocity=0, duration=2.0)
+            # Non-blocking: Start panning right (returns immediately)
+            ptz.continuous_move(pan_velocity=0.5, tilt_velocity=0)
             
-            # Tilt up for 1 second
-            ptz.continuous_move(pan_velocity=0, tilt_velocity=0.3, duration=1.0)
+            # Blocking: Pan right for 2 seconds then stop
+            ptz.continuous_move(pan_velocity=0.5, tilt_velocity=0, duration=2.0, blocking=True)
         """
         try:
             # Clamp velocities to valid range
@@ -207,17 +209,16 @@ class PTZController:
             
             logger.debug(
                 f"Continuous move: pan={pan_velocity}, tilt={tilt_velocity}, "
-                f"zoom={zoom_velocity}, duration={duration}s"
+                f"zoom={zoom_velocity}, blocking={blocking}"
             )
             
             # Start movement
             self.ptz_service.ContinuousMove(request)
             
-            # Wait for specified duration
-            time.sleep(duration)
-            
-            # Stop movement
-            self.stop()
+            # If blocking mode, wait and stop
+            if blocking:
+                time.sleep(duration)
+                self.stop()
             
             return True
             

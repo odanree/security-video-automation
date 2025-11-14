@@ -254,19 +254,21 @@ async def move_to_preset(preset_token: str, speed: float = 0.5) -> Dict[str, str
 
 @app.post("/api/camera/move")
 async def move_camera(move_data: Dict[str, float]) -> Dict[str, str]:
-    """Continuous camera movement"""
+    """Continuous camera movement (non-blocking)"""
     if not ptz_controller:
         raise HTTPException(status_code=503, detail="PTZ controller not available")
     
     try:
         pan = move_data.get('pan_velocity', move_data.get('pan', 0.0))
         tilt = move_data.get('tilt_velocity', move_data.get('tilt', 0.0))
-        duration = move_data.get('duration', 1.0)
+        duration = move_data.get('duration', 0.5)
         
+        # Non-blocking movement - returns immediately
         ptz_controller.continuous_move(
             pan_velocity=pan,
             tilt_velocity=tilt,
-            duration=duration
+            duration=duration,
+            blocking=False  # Don't wait for movement to complete
         )
         return {
             "status": "success",
@@ -274,6 +276,23 @@ async def move_camera(move_data: Dict[str, float]) -> Dict[str, str]:
         }
     except Exception as e:
         logger.error(f"Error moving camera: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/camera/stop")
+async def stop_camera() -> Dict[str, str]:
+    """Stop camera movement"""
+    if not ptz_controller:
+        raise HTTPException(status_code=503, detail="PTZ controller not available")
+    
+    try:
+        ptz_controller.stop()
+        return {
+            "status": "success",
+            "message": "Camera movement stopped"
+        }
+    except Exception as e:
+        logger.error(f"Error stopping camera: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
