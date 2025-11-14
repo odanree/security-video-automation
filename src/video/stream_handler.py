@@ -227,12 +227,9 @@ class VideoStreamHandler:
             
             # Read frame
             try:
-                # OPTIMIZATION: Skip stale frames in the buffer
-                # Read and discard up to 2 frames to get the latest one (minimal latency)
-                for _ in range(2):
-                    ret, frame = self.capture.read()
-                    if not ret:
-                        break
+                # Read single frame for full FPS display
+                # (Previously skipped 2 frames for latency optimization, but reduced FPS to 7.7)
+                ret, frame = self.capture.read()
                 
                 if not ret:
                     logger.warning(f"Failed to read frame from '{self.name}'")
