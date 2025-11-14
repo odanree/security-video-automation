@@ -304,6 +304,8 @@ class ConfigLoader:
         # Get PTZ settings
         ptz_cfg = tracking_raw.ptz or {}
         cooldown_time = ptz_cfg.get('cooldown_time', 3.0)
+        home_preset = ptz_cfg.get('home_preset', 'Preset004')
+        inactivity_timeout = ptz_cfg.get('inactivity_timeout', 5.0)
         
         # Create TrackingConfig
         config = TrackingConfig(
@@ -314,7 +316,9 @@ class ConfigLoader:
             movement_threshold=movement_threshold,
             cooldown_time=cooldown_time,
             max_tracking_age=3.0,
-            enable_recording=False
+            enable_recording=False,
+            home_preset=home_preset,
+            inactivity_timeout=inactivity_timeout
         )
         
         return config

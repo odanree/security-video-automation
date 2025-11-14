@@ -76,6 +76,8 @@ class TrackingConfig:
         cooldown_time: Seconds between PTZ movements
         max_tracking_age: Max seconds to track object without detection
         enable_recording: Whether to record tracked events
+        home_preset: Preset to return to when inactive (e.g., 'Preset004')
+        inactivity_timeout: Seconds before returning to home position
     """
     zones: List[TrackingZone] = field(default_factory=list)
     target_classes: List[str] = field(default_factory=lambda: ['person'])
@@ -85,6 +87,8 @@ class TrackingConfig:
     cooldown_time: float = 3.0
     max_tracking_age: float = 2.0
     enable_recording: bool = False
+    home_preset: str = "Preset004"
+    inactivity_timeout: float = 5.0
 
 
 @dataclass
@@ -160,8 +164,8 @@ class TrackingEngine:
         self.current_preset: Optional[str] = None
         self.last_ptz_time: float = 0.0
         self.last_movement_time: float = 0.0  # Track inactivity for home return
-        self.home_preset: str = "Preset004"  # Return to home when inactive
-        self.inactivity_timeout: float = 5.0  # Seconds before returning home
+        self.home_preset: str = config.home_preset  # Load from config (Preset004)
+        self.inactivity_timeout: float = config.inactivity_timeout  # Load from config
         self.active_events: Dict[str, TrackingEvent] = {}
         self.completed_events: List[TrackingEvent] = []
         self.event_counter = 0
@@ -461,10 +465,9 @@ class TrackingEngine:
         frame
     ) -> None:
         """
-        Execute tracking action - Center-of-frame continuous tracking
+        Execute tracking action - Fast center-of-frame continuous tracking
         
-        Uses subject's position in frame to calculate proportional pan/tilt velocity,
-        keeping the subject centered (or close to center) automatically.
+        Aggressive centering with fast pan/tilt response for quick subject acquisition.
         
         Args:
             detection: Detection result
@@ -486,24 +489,21 @@ class TrackingEngine:
         max_offset_x = width / 2.0
         normalized_offset_x = offset_pixels_x / max_offset_x
         
-        # Dead zone: if subject is close to center, don't pan
-        DEAD_ZONE_PIXELS_X = 80  # If within 80 pixels of center, stop panning
+        # Small dead zone for fast response (40px instead of 80px)
+        DEAD_ZONE_PIXELS_X = 40
         if abs(offset_pixels_x) < DEAD_ZONE_PIXELS_X:
             pan_velocity = 0.0
             pan_state = "CENTERED_X"
         else:
-            max_pan_velocity = 0.7
+            # Faster max velocity for quicker centering
+            max_pan_velocity = 1.0
             
-            # Exponential smoothing for more natural tracking
-            if abs(normalized_offset_x) < 0.3:
-                # Quadratic for smooth acceleration near center
-                pan_velocity = max_pan_velocity * (normalized_offset_x ** 2) * (1 if normalized_offset_x > 0 else -1)
-            else:
-                # Linear for consistent tracking at edges
-                pan_velocity = max_pan_velocity * normalized_offset_x
+            # Use linear mapping for faster initial response
+            # (quadratic was too slow to get started)
+            pan_velocity = max_pan_velocity * normalized_offset_x
             
             # Clamp to valid range
-            pan_velocity = max(-0.7, min(0.7, pan_velocity))
+            pan_velocity = max(-1.0, min(1.0, pan_velocity))
             pan_state = "TRACKING_X"
         
         # ========== TILT (Vertical Y-axis) ==========
@@ -514,41 +514,37 @@ class TrackingEngine:
         max_offset_y = height / 2.0
         normalized_offset_y = offset_pixels_y / max_offset_y
         
-        # Dead zone: if subject is close to center, don't tilt
-        DEAD_ZONE_PIXELS_Y = 80
+        # Small dead zone for fast response (40px instead of 80px)
+        DEAD_ZONE_PIXELS_Y = 40
         if abs(offset_pixels_y) < DEAD_ZONE_PIXELS_Y:
             tilt_velocity = 0.0
             tilt_state = "CENTERED_Y"
         else:
-            max_tilt_velocity = 0.7
+            # Faster max velocity for quicker centering
+            max_tilt_velocity = 1.0
             
-            # Exponential smoothing for more natural tracking
-            if abs(normalized_offset_y) < 0.3:
-                # Quadratic for smooth acceleration near center
-                tilt_velocity = max_tilt_velocity * (normalized_offset_y ** 2) * (1 if normalized_offset_y > 0 else -1)
-            else:
-                # Linear for consistent tracking at edges
-                tilt_velocity = max_tilt_velocity * normalized_offset_y
+            # Use linear mapping for faster initial response
+            tilt_velocity = max_tilt_velocity * normalized_offset_y
             
             # Clamp to valid range
-            tilt_velocity = max(-0.7, min(0.7, tilt_velocity))
+            tilt_velocity = max(-1.0, min(1.0, tilt_velocity))
             tilt_state = "TRACKING_Y"
         
         # Log tracking state
         logger.info(
-            f"{detection.class_name} center tracking: "
+            f"{detection.class_name} fast center tracking: "
             f"X offset={offset_pixels_x:+.0f}px → pan={pan_velocity:+.2f} ({pan_state}) | "
             f"Y offset={offset_pixels_y:+.0f}px → tilt={tilt_velocity:+.2f} ({tilt_state})"
         )
         
         try:
-            # Execute continuous pan/tilt movement (non-blocking, short duration)
-            # This creates smooth, centered tracking in both axes
+            # Execute continuous pan/tilt movement (non-blocking, shorter duration for faster updates)
+            # Reduced from 0.3s to 0.15s for more responsive centering
             self.ptz.continuous_move(
                 pan_velocity=pan_velocity,
                 tilt_velocity=tilt_velocity,
                 zoom_velocity=0.0,
-                duration=0.3,  # Short duration for responsive tracking
+                duration=0.15,  # Faster updates = faster centering
                 blocking=False  # Non-blocking so we process next frame immediately
             )
             
