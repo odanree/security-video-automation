@@ -148,20 +148,41 @@ class Dashboard {
     updateStatistics(data) {
         console.log('Updating statistics:', data);
         
+        // DEBUG: Update page title to confirm function is called
+        document.title = `Stats: ${data.detections || 0} detections | Tracker`;
+        
         // Update stat cards - map backend keys to DOM elements with null checks
         const detectionsEl = document.getElementById('stat-detections');
-        if (detectionsEl) detectionsEl.textContent = data.detections || 0;
+        if (detectionsEl) {
+            detectionsEl.textContent = data.detections || 0;
+            console.log('Updated detections element:', detectionsEl.textContent);
+        } else {
+            console.warn('stat-detections element not found!');
+        }
         
         const tracksEl = document.getElementById('stat-tracks');
-        if (tracksEl) tracksEl.textContent = data.tracks || 0;
+        if (tracksEl) {
+            tracksEl.textContent = data.tracks || 0;
+            console.log('Updated tracks element:', tracksEl.textContent);
+        } else {
+            console.warn('stat-tracks element not found!');
+        }
         
         const eventsEl = document.getElementById('stat-events');
-        if (eventsEl) eventsEl.textContent = data.completed_events || 0;
+        if (eventsEl) {
+            eventsEl.textContent = data.completed_events || 0;
+            console.log('Updated events element:', eventsEl.textContent);
+        } else {
+            console.warn('stat-events element not found!');
+        }
         
         // Display additional stats if available
         const fpsElement = document.getElementById('stat-fps');
         if (fpsElement) {
-            fpsElement.textContent = (data.processing_fps || 0).toFixed(1);
+            fpsElement.textContent = (data.processing_fps || data.fps || 0).toFixed(1);
+            console.log('Updated FPS element:', fpsElement.textContent);
+        } else {
+            console.warn('stat-fps element not found!');
         }
         
         // Update frame and processing info
@@ -177,7 +198,7 @@ class Dashboard {
         
         const modeEl = document.getElementById('stat-mode');
         if (modeEl) {
-            modeEl.textContent = data.current_mode || 'unknown';
+            modeEl.textContent = data.mode || data.current_mode || 'unknown';
         }
     }
     

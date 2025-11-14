@@ -253,16 +253,16 @@ async def move_to_preset(preset_token: str, speed: float = 0.5) -> Dict[str, str
 
 
 @app.post("/api/camera/move")
-async def move_camera(
-    pan: float = 0.0,
-    tilt: float = 0.0,
-    duration: float = 1.0
-) -> Dict[str, str]:
+async def move_camera(move_data: Dict[str, float]) -> Dict[str, str]:
     """Continuous camera movement"""
     if not ptz_controller:
         raise HTTPException(status_code=503, detail="PTZ controller not available")
     
     try:
+        pan = move_data.get('pan_velocity', move_data.get('pan', 0.0))
+        tilt = move_data.get('tilt_velocity', move_data.get('tilt', 0.0))
+        duration = move_data.get('duration', 1.0)
+        
         ptz_controller.continuous_move(
             pan_velocity=pan,
             tilt_velocity=tilt,
