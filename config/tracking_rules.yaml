@@ -15,7 +15,7 @@ tracking:
   target_classes:
     - "person"
     - "bicycle"
-    - "car"
+    - "truck"
   
   # Object detection settings
   detection:
