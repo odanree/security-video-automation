@@ -168,7 +168,7 @@ body {
 /* Main Grid */
 .main-grid {
     display: grid;
-    grid-template-columns: 2fr 1fr;
+    grid-template-columns: 1fr;
     gap: 2rem;
     margin-bottom: 2rem;
 }
@@ -208,6 +208,7 @@ body {
     padding-bottom: 56.25%; /* 16:9 aspect ratio */
     background-color: #000;
     overflow: hidden;
+    max-height: 80vh; /* Take up to 80% of viewport height */
 }
 
 #video-stream {
