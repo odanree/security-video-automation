@@ -11,12 +11,10 @@ tracking:
   # Target object classes to track
   # Available: person, bicycle, car, motorcycle, airplane, bus, train, truck, boat, etc.
   # See COCO dataset for full list of 80 classes
+  # NOTE: Optimized for SLOW-MOVING subjects (humans)
+  # Fast-moving vehicles (cars, trucks) are too quick for PTZ camera speed
   target_classes:
     - "person"
-    - "car"
-    - "truck"
-    - "bicycle"
-    - "motorcycle"
   
   # Object detection settings
   detection:
