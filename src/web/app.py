@@ -111,10 +111,54 @@ async def startup_event():
             password=camera['password']
         )
         
+        # Initialize tracking engine
+        from src.automation.tracking_engine import TrackingConfig, TrackingZone
+        
+        # Create default tracking config
+        tracking_cfg = TrackingConfig(
+            zones=[
+                TrackingZone(
+                    name="zone_left",
+                    x_range=(0.0, 0.33),
+                    y_range=(0.0, 1.0),
+                    preset_token="1",
+                    priority=2
+                ),
+                TrackingZone(
+                    name="zone_center",
+                    x_range=(0.33, 0.66),
+                    y_range=(0.0, 1.0),
+                    preset_token="2",
+                    priority=1
+                ),
+                TrackingZone(
+                    name="zone_right",
+                    x_range=(0.66, 1.0),
+                    y_range=(0.0, 1.0),
+                    preset_token="3",
+                    priority=2
+                ),
+            ],
+            target_classes=['person'],
+            min_confidence=0.6,
+            movement_threshold=100,
+            cooldown_time=2.0,
+            max_tracking_age=3.0
+        )
+        
+        # Initialize tracking engine
+        tracking_engine = TrackingEngine(
+            detector=detector,
+            motion_tracker=tracker,
+            ptz_controller=ptz_controller,
+            stream_handler=stream_handler,
+            config=tracking_cfg
+        )
+        
         logger.info("✓ All components initialized successfully")
         
     except Exception as e:
-        logger.error(f"Failed to initialize system: {e}")
+        logger.error(f"Failed to initialize system: {e}", exc_info=True)
         raise
 
 
@@ -340,41 +384,53 @@ async def start_tracking() -> Dict[str, str]:
     """Start automated tracking"""
     global tracking_engine
     
-    if tracking_engine and tracking_engine.is_running:
+    if not tracking_engine:
+        raise HTTPException(status_code=500, detail="Tracking engine not initialized")
+    
+    if tracking_engine.running:
         return {"status": "already_running", "message": "Tracking already active"}
     
     try:
-        # Initialize tracking engine if not exists
-        if not tracking_engine:
-            tracking_config = config_loader.load_tracking_config()
-            tracking_engine = TrackingEngine(
-                detector=detector,
-                tracker=tracker,
-                ptz_controller=ptz_controller,
-                stream_handler=stream_handler,
-                config=tracking_config
-            )
-        
         tracking_engine.start()
+        logger.info("Tracking started via API")
         return {"status": "success", "message": "Tracking started"}
         
     except Exception as e:
-        logger.error(f"Error starting tracking: {e}")
+        logger.error(f"Error starting tracking: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/api/tracking/stop")
 async def stop_tracking() -> Dict[str, str]:
     """Stop automated tracking"""
-    if not tracking_engine or not tracking_engine.is_running:
+    if not tracking_engine or not tracking_engine.running:
         return {"status": "not_running", "message": "Tracking not active"}
     
     try:
         tracking_engine.stop()
+        logger.info("Tracking stopped via API")
         return {"status": "success", "message": "Tracking stopped"}
     except Exception as e:
-        logger.error(f"Error stopping tracking: {e}")
+        logger.error(f"Error stopping tracking: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/tracking/status")
+async def get_tracking_status() -> Dict[str, Any]:
+    """Get tracking engine status"""
+    if not tracking_engine:
+        return {"running": False, "status": "not_initialized"}
+    
+    return {
+        "running": tracking_engine.running,
+        "paused": tracking_engine.paused,
+        "mode": tracking_engine.mode.value,
+        "current_preset": tracking_engine.current_preset,
+        "active_tracks": len(tracking_engine.active_events),
+        "completed_events": len(tracking_engine.completed_events),
+        "detections": tracking_engine.detection_count,
+        "ptz_movements": tracking_engine.ptz_movement_count
+    }
 
 
 @app.get("/api/events")

@@ -325,6 +325,27 @@ class Dashboard {
         }
     }
     
+    updateTrackingStats(data) {
+        /**Update tracking statistics display*/
+        // Update active tracks count if element exists
+        const activeTracksEl = document.getElementById('active-tracks');
+        if (activeTracksEl) {
+            activeTracksEl.textContent = data.active_tracks || 0;
+        }
+        
+        // Update detections count if element exists
+        const detectionsEl = document.getElementById('tracking-detections');
+        if (detectionsEl) {
+            detectionsEl.textContent = data.detections || 0;
+        }
+        
+        // Update PTZ movements count if element exists
+        const movementsEl = document.getElementById('ptz-movements');
+        if (movementsEl) {
+            movementsEl.textContent = data.ptz_movements || 0;
+        }
+    }
+    
     // ========================================================================
     // PTZ Camera Control
     // ========================================================================
@@ -544,6 +565,22 @@ class Dashboard {
                 console.error('Error polling statistics:', e);
             }
         }, 2000);
+        
+        // Poll tracking status every 3 seconds
+        setInterval(async () => {
+            try {
+                const response = await fetch('/api/tracking/status');
+                if (response.ok) {
+                    const data = await response.json();
+                    console.log('Tracking status:', data);
+                    this.isTracking = data.running;
+                    this.updateTrackingUI();
+                    this.updateTrackingStats(data);
+                }
+            } catch (e) {
+                console.error('Error polling tracking status:', e);
+            }
+        }, 3000);
         
         // Reload events every 5 seconds
         setInterval(() => this.loadEvents(), 5000);
