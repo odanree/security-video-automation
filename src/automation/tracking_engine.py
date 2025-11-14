@@ -414,9 +414,9 @@ class TrackingEngine:
         current_time = time.time()
         
         # ⭐ OPTIMIZATION: Frame skipping for detection
-        # Submit frame to async detection worker every 2nd frame for better tracking responsiveness
+        # Submit frame to async detection worker every frame for maximum tracking responsiveness
         # Main loop does NOT wait for detection - just submits and continues
-        detection_skip_interval = 2  # Submit to detection every Nth frame
+        detection_skip_interval = 1  # Submit to detection every frame (no skipping)
         
         frame_height, frame_width = frame.shape[:2]
         
@@ -545,8 +545,8 @@ class TrackingEngine:
             return False
         
         # Check cooldown to avoid excessive pan commands
-        # For center tracking, we want faster updates (0.1s instead of 0.2s for better responsiveness)
-        center_tracking_cooldown = 0.1  # Much shorter for responsive centering
+        # For center tracking, we want very fast updates (0.05s for responsive centering with walking people)
+        center_tracking_cooldown = 0.05  # Ultra-responsive for keeping up with movement
         time_since_last_move = time.time() - self.last_ptz_time
         if time_since_last_move < center_tracking_cooldown:
             return False
