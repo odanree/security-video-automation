@@ -409,6 +409,7 @@ def generate_frames(show_detections=False):
     frame_count = 0
     last_detections = []
     last_frame_time = time.time()
+    last_frame = None
     
     # Different FPS targets per mode
     if show_detections:
@@ -418,7 +419,7 @@ def generate_frames(show_detections=False):
         TARGET_FPS = 30  # Fast mode: 30 FPS, no processing
         PROCESS_EVERY_N_FRAMES = 1  # Not used in fast mode
     
-    JPEG_QUALITY = 70
+    JPEG_QUALITY = 75  # Slightly higher quality for better visuals
     
     while True:
         if not stream_handler or stream_handler.stopped:
@@ -428,9 +429,15 @@ def generate_frames(show_detections=False):
         try:
             frame = stream_handler.read()
             
+            # If no new frame, reuse last frame to maintain FPS
             if frame is None:
-                time.sleep(0.0001)
-                continue
+                if last_frame is not None:
+                    frame = last_frame
+                else:
+                    time.sleep(0.001)
+                    continue
+            else:
+                last_frame = frame.copy()
             
             # Run detection if overlays are enabled
             if show_detections and detector:
