@@ -426,6 +426,9 @@ class TrackingEngine:
         """
         Determine if tracking action should be triggered
         
+        For center-of-frame tracking: Trigger on EVERY detected object to ensure
+        continuous centering, not just on directional changes.
+        
         Args:
             detection: Detection result
             direction: Movement direction
@@ -434,21 +437,18 @@ class TrackingEngine:
         Returns:
             True if action should be triggered
         """
-        # Check if direction matches triggers
-        if direction not in self.config.direction_triggers:
+        # For center-of-frame tracking, we track ANY detected object
+        # Not just ones matching direction_triggers
+        
+        # Check if object has been tracked long enough (avoid tracking for 1-2 frames)
+        if track_info.frames_tracked < 2:
             return False
         
-        # Check if object has moved enough
-        if track_info.total_displacement < self.config.movement_threshold:
-            return False
-        
-        # Check cooldown
+        # Check cooldown to avoid excessive pan commands
+        # For center tracking, we want faster updates (0.2s instead of 3.0s)
+        center_tracking_cooldown = 0.2  # Much shorter for responsive centering
         time_since_last_move = time.time() - self.last_ptz_time
-        if time_since_last_move < self.config.cooldown_time:
-            return False
-        
-        # Check if object is stationary
-        if direction == Direction.STATIONARY:
+        if time_since_last_move < center_tracking_cooldown:
             return False
         
         return True
