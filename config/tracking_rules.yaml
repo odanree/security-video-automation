@@ -16,6 +16,12 @@ tracking:
     - "person"
     - "bicycle"
     - "truck"
+    - "dog"
+    - "cat"
+    - "bird"
+    - "horse"
+    - "cow"
+    - "sheep"
   
   # Object detection settings
   detection:
