@@ -182,6 +182,8 @@ class TrackingEngine:
         self.detection_count = 0
         self.tracking_count = 0
         self.ptz_movement_count = 0
+        self.zoom_frame_counter = 0  # Skip zoom every other frame
+        self.last_bbox_area = None  # Track previous frame's bbox area for distance trend
         
         # ⭐ ASYNC DETECTION: Run detection in background to prevent blocking
         # Detection runs on separate thread and caches results
@@ -604,7 +606,8 @@ class TrackingEngine:
         
         # ========== TILT (Vertical Y-axis) ==========
         # Calculate offset from center (negative = above center, positive = below)
-        offset_pixels_y = subject_y - frame_center_y
+        # FIXED: Inverted Y-axis so positive offset = camera should tilt UP (negative velocity)
+        offset_pixels_y = frame_center_y - subject_y
         
         # Calculate normalized offset (-1.0 to 1.0, where 0 = centered)
         max_offset_y = height / 2.0
@@ -620,7 +623,8 @@ class TrackingEngine:
             max_tilt_velocity = 1.0
             
             # Use linear mapping for faster initial response
-            tilt_velocity = max_tilt_velocity * normalized_offset_y
+            # FIXED: Negate tilt to correct camera firmware behavior
+            tilt_velocity = -(max_tilt_velocity * normalized_offset_y)
             
             # Clamp to valid range
             tilt_velocity = max(-1.0, min(1.0, tilt_velocity))
@@ -641,14 +645,51 @@ class TrackingEngine:
         print(f"   Velocity: pan={pan_velocity:+.2f}, tilt={tilt_velocity:+.2f}")
         logger.warning(f"⭐ [TRACKING ENGINE] Velocity command: pan={pan_velocity:+.2f}, tilt={tilt_velocity:+.2f}")
         
+        # ========== AUTO-ZOOM BASED ON DISTANCE ==========
+        # Estimate distance from bounding box size
+        # Smaller box = farther away = more zoom needed
+        bbox_width = detection.bbox[2] - detection.bbox[0]
+        bbox_height = detection.bbox[3] - detection.bbox[1]
+        bbox_area = bbox_width * bbox_height
+        
+        # Calibration: Assume ~40000 px² = person at ideal distance (no zoom needed)
+        # Smaller area = zoom in, larger area = zoom out
+        IDEAL_BBOX_AREA = 40000
+        
+        # Skip zoom every 3 frames for smoother, less aggressive behavior
+        self.zoom_frame_counter += 1
+        if self.zoom_frame_counter % 3 == 0:  # Apply zoom only every 3rd frame
+            if bbox_area > 0:
+                # Check if subject is getting CLOSER (bbox_area increasing)
+                getting_closer = False
+                if self.last_bbox_area is not None:
+                    # If area increased, subject is closer
+                    getting_closer = bbox_area > self.last_bbox_area * 1.05  # 5% threshold to avoid noise
+                
+                # Only zoom if subject is getting closer
+                if getting_closer:
+                    area_ratio = IDEAL_BBOX_AREA / bbox_area
+                    zoom_velocity = max(-0.2, min(0.2, (area_ratio - 1.0) * 0.05))
+                else:
+                    zoom_velocity = 0.0  # Stop zooming if moving away
+                
+                self.last_bbox_area = bbox_area
+            else:
+                zoom_velocity = 0.0
+        else:
+            zoom_velocity = 0.0  # Skip zoom this frame
+        
+        print(f"   Distance estimate: bbox_area={bbox_area:.0f}px² → zoom={zoom_velocity:+.2f}")
+        logger.info(f"Auto-zoom: bbox_area={bbox_area:.0f} → zoom_velocity={zoom_velocity:+.2f}")
+        
         try:
-            # Execute continuous pan/tilt movement (blocking with SHORT duration)
+            # Execute continuous pan/tilt/zoom movement (blocking with SHORT duration)
             # CRITICAL: Must use blocking=True, otherwise camera never stops moving!
             # We use very short duration (0.1s) so it returns quickly for next frame
             self.ptz.continuous_move(
                 pan_velocity=pan_velocity,
                 tilt_velocity=tilt_velocity,
-                zoom_velocity=0.0,
+                zoom_velocity=zoom_velocity,  # Auto-zoom based on distance
                 duration=0.1,  # Short duration for responsive updates
                 blocking=True  # CRITICAL: Automatically stops after duration
             )

@@ -15,7 +15,6 @@ tracking:
   target_classes:
     - "person"
     - "bicycle"
-    - "truck"
     - "dog"
     - "cat"
     - "bird"

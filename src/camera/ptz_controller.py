@@ -213,7 +213,7 @@ class PTZController:
             
             # ⭐ DETAILED LOG: Log the actual ONVIF command being sent
             logger.warning(f"⭐ [PTZ COMMAND] ContinuousMove: pan={pan_velocity}, tilt={tilt_velocity}, zoom={zoom_velocity}, blocking={blocking}, duration={duration}")
-            print(f"⭐ [PTZ COMMAND] ContinuousMove: pan={pan_velocity}, tilt={tilt_velocity}, zoom={tilt_velocity}")
+            print(f"⭐ [PTZ COMMAND] ContinuousMove: pan={pan_velocity}, tilt={tilt_velocity}, zoom={zoom_velocity}")
             
             # Start movement
             self.ptz_service.ContinuousMove(request)

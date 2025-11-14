@@ -211,14 +211,14 @@ class CameraTrackerApp(QMainWindow):
         right_scroll.setWidgetResizable(True)
         right_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         right_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        right_scroll.setMinimumWidth(350)  # Ensure controls panel has minimum width
-        right_scroll.setMaximumWidth(450)  # Limit maximum width for better layout
+        right_scroll.setMinimumWidth(220)  # Reduced from 350 for more video space
+        right_scroll.setMaximumWidth(280)  # Reduced from 450 for more video space
         
         # Enable mouse events for scroll area
         right_scroll.setFocusPolicy(Qt.StrongFocus)
         
         right_widget = QWidget()
-        right_widget.setMinimumWidth(330)  # Ensure content fits
+        right_widget.setMinimumWidth(200)  # Reduced from 330
         right_layout = QVBoxLayout()
         right_widget.setLayout(right_layout)
         right_scroll.setWidget(right_widget)
@@ -426,10 +426,12 @@ class CameraTrackerApp(QMainWindow):
                 background-color: #4CAF50;
                 color: white;
                 border: none;
-                padding: 15px;
-                font-size: 16px;
+                padding: 8px;
+                font-size: 12px;
                 font-weight: bold;
                 border-radius: 5px;
+                min-width: 40px;
+                min-height: 40px;
             }
             QPushButton:hover {
                 background-color: #45a049;
