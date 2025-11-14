@@ -22,9 +22,9 @@ cameras:
       http_url: "http://192.168.1.107:8080/video"
       
       # Stream settings
-      resolution: [1280, 720]  # Width x Height (REDUCED for better performance)
-      fps: 15  # Target FPS (REDUCED from 30 to lower CPU load)
-      buffer_size: 10  # Number of frames to buffer (REDUCED from 30 to save memory)
+      resolution: [1280, 720]  # Balance between quality and CPU performance
+      fps: 20  # 20 FPS target
+      buffer_size: 12  # Moderate buffer
       
       # Reconnection settings
       auto_reconnect: true

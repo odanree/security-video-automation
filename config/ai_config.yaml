@@ -20,8 +20,8 @@ object_detection:
   
   # Inference settings
   inference:
-    # Device: cpu, cuda, mps (for Apple Silicon)
-    device: "cpu"  # Change to "cuda" if GPU available
+    # Device: cpu, cuda, dml (DirectML for AMD GPU), mps (for Apple Silicon)
+    device: "cpu"  # Using CPU - DirectML has compatibility issues with YOLOv8
     
     # Batch processing
     batch_size: 1  # Number of frames to process at once
@@ -30,10 +30,10 @@ object_detection:
     half_precision: false
     
     # Image preprocessing
-    input_size: 416  # Model input size (REDUCED from 640 for 2x speed boost)
+    input_size: 480  # Optimized for CPU (between 416 and 640)
     
     # Confidence thresholds
-    confidence_threshold: 0.7  # Minimum confidence (INCREASED to reduce false positives)
+    confidence_threshold: 0.65  # Balanced threshold
     iou_threshold: 0.45  # IoU threshold for NMS (Non-Maximum Suppression)
     
     # Maximum detections per image
