@@ -830,37 +830,63 @@ class Dashboard {
     // ========================================================================
     
     toggleDetections() {
-        const videoImg = document.getElementById('video-stream');
+        const canvas = document.getElementById('video-canvas');
         const btn = document.getElementById('btn-toggle-detections');
+        const overlay = document.getElementById('video-overlay');
         
-        if (!videoImg) return;
+        if (!canvas) return;
         
-        // Determine target URL based on current state
-        let targetUrl;
-        if (videoImg.src.includes('detections=true')) {
-            // Switch back to normal stream (no overlays, faster)
-            targetUrl = '/api/video/stream';
-            this.isDetectionMode = false;
-            btn.style.opacity = '0.5';
-            btn.title = 'Enable Detection Overlays';
-        } else {
-            // Switch to detection stream (with overlays)
-            targetUrl = '/api/video/stream?detections=true';
-            this.isDetectionMode = true;
+        // Toggle detection mode
+        this.isDetectionMode = !this.isDetectionMode;
+        
+        if (this.isDetectionMode) {
+            // Switch to MJPEG stream with detection overlays
             btn.style.opacity = '1.0';
-            btn.title = 'Disable Detection Overlays';
-        }
-        
-        // Force a new stream connection by clearing and resetting src
-        videoImg.src = '';
-        
-        setTimeout(() => {
-            const timestamp = Date.now();
-            videoImg.src = `${targetUrl}${targetUrl.includes('?') ? '&' : '?'}t=${timestamp}`;
+            btn.title = 'Disable Detection Overlays (lower latency without detection)';
             
-            // Refresh camera info to update FPS display
-            this.loadSystemStatus();
-        }, 100);
+            // Show loading indicator
+            overlay.classList.remove('hidden');
+            
+            // Create img element for MJPEG stream
+            const img = document.createElement('img');
+            img.id = 'video-stream-detection';
+            img.src = '/api/video/stream?detections=true&t=' + Date.now();
+            img.style.width = '100%';
+            img.style.height = 'auto';
+            img.style.display = 'block';
+            
+            // Replace canvas with img
+            canvas.style.display = 'none';
+            canvas.parentElement.insertBefore(img, canvas);
+            
+            img.onload = () => {
+                overlay.classList.add('hidden');
+            };
+            
+            img.onerror = () => {
+                overlay.classList.add('hidden');
+            };
+            
+        } else {
+            // Switch back to WebSocket stream (no detection, faster)
+            btn.style.opacity = '0.5';
+            btn.title = 'Enable Detection Overlays (adds ~50-100ms latency)';
+            
+            // Remove MJPEG img if it exists
+            const img = document.getElementById('video-stream-detection');
+            if (img) {
+                img.remove();
+            }
+            
+            // Show canvas again
+            canvas.style.display = 'block';
+            overlay.classList.remove('hidden');
+            
+            // WebSocket should auto-reconnect
+            setTimeout(() => {
+                overlay.classList.add('hidden');
+            }, 2000);
+        }
     }
     
     // ========================================================================
