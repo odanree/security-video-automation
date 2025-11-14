@@ -559,6 +559,20 @@ async def websocket_endpoint(websocket: WebSocket):
             # Send statistics every second
             if tracking_engine:
                 stats = tracking_engine.get_statistics()
+                
+                # Always add stream handler stats for FPS and connection info
+                if stream_handler:
+                    try:
+                        stream_stats = stream_handler.get_stats()
+                        stats['fps'] = stream_stats.fps if stream_stats.is_connected else 0
+                        stats['frames_dropped'] = stream_stats.frames_dropped
+                        stats['stream_connected'] = stream_stats.is_connected
+                    except Exception as e:
+                        logger.error(f"Error getting stream stats in WebSocket: {e}")
+                        stats['fps'] = 0
+                        stats['frames_dropped'] = 0
+                        stats['stream_connected'] = False
+                        
             elif stream_handler:
                 # Use stream handler stats as fallback
                 try:
@@ -574,8 +588,9 @@ async def websocket_endpoint(websocket: WebSocket):
                         'is_running': not stream_handler.stopped,
                         'is_paused': False,
                         'mode': 'streaming',
-                        'fps': stream_stats.fps,
-                        'frames_dropped': stream_stats.frames_dropped
+                        'fps': stream_stats.fps if stream_stats.is_connected else 0,
+                        'frames_dropped': stream_stats.frames_dropped,
+                        'stream_connected': stream_stats.is_connected
                     }
                 except Exception as e:
                     logger.error(f"Error getting stream stats in WebSocket: {e}")

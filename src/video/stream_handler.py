@@ -236,6 +236,7 @@ class VideoStreamHandler:
                 with self.lock:
                     self.stats.frames_received += 1
                     self.stats.last_frame_time = current_time
+                    self.stats.is_connected = True  # Confirm connection when frame received
                 
                 # Calculate FPS with exponential moving average
                 # Only calculate if frame_delta is reasonable (not first frame or huge gap)
