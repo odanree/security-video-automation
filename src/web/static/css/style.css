@@ -208,7 +208,7 @@ body {
     background-color: #000;
     overflow: hidden;
     max-width: 100%;
-    max-height: 55vh; /* Limit height to leave room for PTZ controls */
+    max-height: 65vh; /* Limit height to leave room for PTZ controls */
     aspect-ratio: 640 / 480; /* 4:3 aspect ratio */
 }
 
