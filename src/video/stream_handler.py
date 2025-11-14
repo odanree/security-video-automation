@@ -149,6 +149,17 @@ class VideoStreamHandler:
                 logger.error(f"Failed to open stream: {self.stream_url}")
                 return False
             
+            # CRITICAL: Disable ALL OpenCV buffering for ultra-low-latency streaming
+            self.capture.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # Minimal buffer
+            
+            # Force lowest latency settings
+            self.capture.set(cv2.CAP_PROP_FPS, 20)  # Target FPS
+            self.capture.set(cv2.CAP_PROP_FRAME_WIDTH, 480)  # Low res
+            self.capture.set(cv2.CAP_PROP_FRAME_HEIGHT, 360)
+            
+            # RTSP-specific low-latency settings
+            self.capture.set(cv2.CAP_PROP_AUTOFOCUS, 0)  # Disable autofocus (causes delays)
+            
             # Get stream properties
             width = int(self.capture.get(cv2.CAP_PROP_FRAME_WIDTH))
             height = int(self.capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
@@ -175,6 +186,9 @@ class VideoStreamHandler:
         """
         fps_counter = 0
         fps_start_time = time.time()
+        last_frame_time = time.time()
+        fps_ema = 0.0  # Exponential moving average for smoother FPS
+        fps_alpha = 0.3  # Smoothing factor (0.3 = 30% new, 70% old)
         
         while not self.stopped:
             # Check if capture is valid
@@ -183,6 +197,7 @@ class VideoStreamHandler:
                 
                 with self.lock:
                     self.stats.is_connected = False
+                    self.stats.fps = 0.0  # Reset FPS when disconnected
                 
                 # Try to reconnect
                 if self.reconnect_enabled:
@@ -197,6 +212,7 @@ class VideoStreamHandler:
                         
                         if self._connect():
                             logger.info(f"✓ Reconnected to '{self.name}'")
+                            fps_ema = 0.0  # Reset FPS EMA on reconnect
                             continue
                         else:
                             time.sleep(self.reconnect_delay)
@@ -211,7 +227,12 @@ class VideoStreamHandler:
             
             # Read frame
             try:
-                ret, frame = self.capture.read()
+                # OPTIMIZATION: Skip stale frames in the buffer
+                # Read and discard up to 2 frames to get the latest one (minimal latency)
+                for _ in range(2):
+                    ret, frame = self.capture.read()
+                    if not ret:
+                        break
                 
                 if not ret:
                     logger.warning(f"Failed to read frame from '{self.name}'")
@@ -225,19 +246,37 @@ class VideoStreamHandler:
                 
                 # Update statistics
                 current_time = time.time()
+                frame_delta = current_time - last_frame_time
+                last_frame_time = current_time
                 
                 with self.lock:
                     self.stats.frames_received += 1
                     self.stats.last_frame_time = current_time
+                    self.stats.is_connected = True  # Confirm connection when frame received
                 
-                # Calculate FPS
+                # Calculate FPS with exponential moving average
+                # Only calculate if frame_delta is reasonable (not first frame or huge gap)
+                if 0.001 < frame_delta < 1.0:
+                    # Calculate instantaneous FPS from this frame
+                    inst_fps = 1.0 / frame_delta
+                    
+                    # Apply exponential moving average for smoothing
+                    if fps_ema == 0.0:
+                        fps_ema = inst_fps  # Initialize on first frame
+                    else:
+                        fps_ema = fps_alpha * inst_fps + (1 - fps_alpha) * fps_ema
+                    
+                    with self.lock:
+                        self.stats.fps = fps_ema
+                
+                # Also track in 1-second buckets for reference
                 fps_counter += 1
                 fps_elapsed = current_time - fps_start_time
                 
                 if fps_elapsed >= 1.0:
-                    with self.lock:
-                        self.stats.fps = fps_counter / fps_elapsed
-                    
+                    # Log periodic FPS sample (optional, commented out to reduce noise)
+                    # calc_fps = fps_counter / fps_elapsed
+                    # logger.debug(f"FPS sample: {calc_fps:.1f} (EMA: {fps_ema:.1f})")
                     fps_counter = 0
                     fps_start_time = current_time
                 

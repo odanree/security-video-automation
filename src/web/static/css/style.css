@@ -168,7 +168,7 @@ body {
 /* Main Grid */
 .main-grid {
     display: grid;
-    grid-template-columns: 2fr 1fr;
+    grid-template-columns: 1fr;
     gap: 2rem;
     margin-bottom: 2rem;
 }
@@ -205,12 +205,16 @@ body {
 .video-container {
     position: relative;
     width: 100%;
-    padding-bottom: 56.25%; /* 16:9 aspect ratio */
     background-color: #000;
     overflow: hidden;
+    max-width: 100%;
+    max-height: 65vh; /* Limit height to leave room for PTZ controls */
+    aspect-ratio: 640 / 480; /* 4:3 aspect ratio */
 }
 
-#video-stream {
+#video-stream,
+#video-canvas,
+#video-stream-detection {
     position: absolute;
     top: 0;
     left: 0;

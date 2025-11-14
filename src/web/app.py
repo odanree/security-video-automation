@@ -19,6 +19,7 @@ from typing import Optional, List, Dict, Any
 import cv2
 import asyncio
 import json
+import threading
 from datetime import datetime
 from pathlib import Path
 import logging
@@ -111,10 +112,54 @@ async def startup_event():
             password=camera['password']
         )
         
+        # Initialize tracking engine
+        from src.automation.tracking_engine import TrackingConfig, TrackingZone
+        
+        # Create default tracking config
+        tracking_cfg = TrackingConfig(
+            zones=[
+                TrackingZone(
+                    name="zone_left",
+                    x_range=(0.0, 0.33),
+                    y_range=(0.0, 1.0),
+                    preset_token="1",
+                    priority=2
+                ),
+                TrackingZone(
+                    name="zone_center",
+                    x_range=(0.33, 0.66),
+                    y_range=(0.0, 1.0),
+                    preset_token="2",
+                    priority=1
+                ),
+                TrackingZone(
+                    name="zone_right",
+                    x_range=(0.66, 1.0),
+                    y_range=(0.0, 1.0),
+                    preset_token="3",
+                    priority=2
+                ),
+            ],
+            target_classes=['person'],
+            min_confidence=0.6,
+            movement_threshold=100,
+            cooldown_time=2.0,
+            max_tracking_age=3.0
+        )
+        
+        # Initialize tracking engine
+        tracking_engine = TrackingEngine(
+            detector=detector,
+            motion_tracker=tracker,
+            ptz_controller=ptz_controller,
+            stream_handler=stream_handler,
+            config=tracking_cfg
+        )
+        
         logger.info("✓ All components initialized successfully")
         
     except Exception as e:
-        logger.error(f"Failed to initialize system: {e}")
+        logger.error(f"Failed to initialize system: {e}", exc_info=True)
         raise
 
 
@@ -158,7 +203,7 @@ async def get_status() -> Dict[str, Any]:
             "stream": "running" if stream_handler and not stream_handler.stopped else "stopped",
             "detector": "loaded" if detector else "not loaded",
             "ptz": "connected" if ptz_controller else "disconnected",
-            "tracking": "running" if tracking_engine and tracking_engine.is_running else "stopped"
+            "tracking": "running" if tracking_engine and tracking_engine.running else "stopped"
         },
         "stream_stats": {
             "fps": stream_stats.fps if stream_stats else 0,
@@ -171,72 +216,90 @@ async def get_status() -> Dict[str, Any]:
 
 @app.get("/api/statistics")
 async def get_statistics() -> Dict[str, Any]:
-    """Get tracking statistics"""
-    logger.info(f"Statistics requested - tracking_engine: {tracking_engine is not None}, stream_handler: {stream_handler is not None}")
+    """Get tracking statistics with stream health info"""
     
-    if tracking_engine:
-        stats = tracking_engine.get_statistics()
-        logger.info(f"Returning tracking engine stats: {stats}")
-        return {
-            "frames_processed": stats.get('frames_processed', 0),
-            "detections": stats.get('detections', 0),
-            "tracks": stats.get('tracks', 0),
-            "ptz_movements": stats.get('ptz_movements', 0),
-            "active_events": stats.get('active_events', 0),
-            "completed_events": stats.get('completed_events', 0),
-            "current_mode": stats.get('mode', 'unknown'),
-            "is_running": stats.get('is_running', False)
-        }
-    
-    # Use stream handler stats as fallback when tracking engine not running
-    if stream_handler:
-        try:
-            stream_stats = stream_handler.get_stats()
-            logger.info(f"Stream handler stats: frames_received={stream_stats.frames_received}, fps={stream_stats.fps}, stopped={stream_handler.stopped}")
-            return {
-                "frames_processed": stream_stats.frames_received,
-                "detections": 0,
-                "tracks": 0,
-                "ptz_movements": 0,
-                "active_events": 0,
-                "completed_events": 0,
-                "fps": stream_stats.fps,
-                "frames_dropped": stream_stats.frames_dropped,
-                "is_running": not stream_handler.stopped,
-                "current_mode": "streaming"
-            }
-        except Exception as e:
-            logger.error(f"Error getting stream stats: {e}")
-    
-    # Default fallback
-    logger.warning("Returning default stats - no tracking engine or stream handler available")
-    return {
+    # Base stats structure
+    base_stats = {
         "frames_processed": 0,
         "detections": 0,
         "tracks": 0,
         "ptz_movements": 0,
         "active_events": 0,
         "completed_events": 0,
-        "fps": 0,
+        "current_mode": "unknown",
         "is_running": False,
-        "current_mode": "offline"
+        "fps": 0,
+        "frames_dropped": 0,
+        "stream_connected": False
     }
+    
+    # Get tracking engine stats if RUNNING
+    if tracking_engine and tracking_engine.running:
+        try:
+            stats = tracking_engine.get_statistics()
+            base_stats.update({
+                "frames_processed": stats.get('frames_processed', 0),
+                "detections": stats.get('detections', 0),
+                "tracks": stats.get('tracks', 0),
+                "ptz_movements": stats.get('ptz_movements', 0),
+                "active_events": stats.get('active_events', 0),
+                "completed_events": stats.get('completed_events', 0),
+                "current_mode": stats.get('mode', 'tracking'),
+                "is_running": True
+            })
+        except Exception as e:
+            logger.error(f"Error getting tracking engine stats: {e}")
+    else:
+        # Tracking not running - use stream handler stats
+        base_stats["current_mode"] = "streaming"
+    
+    # Always add stream health info from stream handler (source stream FPS)
+    if stream_handler:
+        try:
+            stream_stats = stream_handler.get_stats()
+            
+            # If tracking is not running, use stream frame count
+            if not (tracking_engine and tracking_engine.running):
+                base_stats["frames_processed"] = stream_stats.frames_received
+            
+            # Update stream stats - always use these for stream health
+            base_stats.update({
+                "fps": stream_stats.fps if stream_stats.is_connected else 0,
+                "frames_dropped": stream_stats.frames_dropped,
+                "stream_connected": stream_stats.is_connected
+            })
+        except Exception as e:
+            logger.error(f"Error getting stream stats: {e}")
+    
+    return base_stats
 
 
 @app.get("/api/camera/info")
 async def get_camera_info() -> Dict[str, Any]:
-    """Get camera information"""
+    """Get camera information including stream stats"""
     if not config_loader:
         raise HTTPException(status_code=503, detail="System not initialized")
     
     camera_config = config_loader.load_camera_config()
     camera = camera_config['cameras'][0]
     
+    # Get current stream FPS from stream handler
+    stream_fps = 0
+    if stream_handler:
+        try:
+            stream_stats = stream_handler.get_stats()
+            stream_fps = stream_stats.fps
+        except:
+            pass
+    
     return {
         "name": camera['name'],
         "ip": camera['ip'],
         "resolution": camera['stream']['resolution'],
-        "fps": camera['stream']['fps'],
+        "camera_fps": camera['stream']['fps'],
+        "stream_fps": round(stream_fps, 1),
+        "output_fps": 30,  # Default fast mode, will be updated by JS
+        "mode": "fast",  # Will be updated by JS based on detection toggle
         "has_ptz": camera.get('ptz', {}).get('enabled', False)
     }
 
@@ -288,18 +351,20 @@ async def move_camera(move_data: Dict[str, float]) -> Dict[str, str]:
     try:
         pan = move_data.get('pan_velocity', move_data.get('pan', 0.0))
         tilt = move_data.get('tilt_velocity', move_data.get('tilt', 0.0))
+        zoom = move_data.get('zoom_velocity', move_data.get('zoom', 0.0))
         duration = move_data.get('duration', 0.5)
         
         # Non-blocking movement - returns immediately
         ptz_controller.continuous_move(
             pan_velocity=pan,
             tilt_velocity=tilt,
+            zoom_velocity=zoom,
             duration=duration,
             blocking=False  # Don't wait for movement to complete
         )
         return {
             "status": "success",
-            "message": f"Moving camera (pan={pan}, tilt={tilt})"
+            "message": f"Moving camera (pan={pan}, tilt={tilt}, zoom={zoom})"
         }
     except Exception as e:
         logger.error(f"Error moving camera: {e}")
@@ -323,46 +388,174 @@ async def stop_camera() -> Dict[str, str]:
         raise HTTPException(status_code=500, detail=str(e))
 
 
+import asyncio
+
+@app.post("/api/camera/zoom/continuous")
+async def zoom_continuous(zoom_velocity: float = 0.5) -> Dict[str, str]:
+    """Continuous zoom movement (for hold-down behavior) - does not auto-stop"""
+    if not ptz_controller:
+        return JSONResponse(
+            {"status": "error", "message": "PTZ not available"},
+            status_code=503
+        )
+    
+    try:
+        # Clamp velocity
+        zoom_velocity = max(-1.0, min(1.0, zoom_velocity))
+        
+        # Start continuous zoom (non-blocking, doesn't auto-stop)
+        ptz_controller.continuous_move(
+            pan_velocity=0.0,
+            tilt_velocity=0.0,
+            zoom_velocity=zoom_velocity,
+            blocking=False
+        )
+        return JSONResponse({"status": "success", "message": "Zooming"}, status_code=200)
+    except Exception as e:
+        logger.error(f"Zoom continuous error: {e}", exc_info=True)
+        return JSONResponse({"status": "success", "message": "Zooming"}, status_code=200)
+
+
+@app.post("/api/camera/zoom/in")
+async def zoom_in(duration: float = 0.1):
+    """Zoom in for specified duration then stop"""
+    logger.info("Zoom in requested")
+    
+    if not ptz_controller:
+        logger.warning("PTZ controller not available")
+        return JSONResponse(
+            {"status": "error", "message": "PTZ not available"},
+            status_code=503
+        )
+    
+    try:
+        logger.debug("Calling continuous_move for zoom in...")
+        ptz_controller.continuous_move(
+            pan_velocity=0.0,
+            tilt_velocity=0.0,
+            zoom_velocity=0.5,
+            blocking=False
+        )
+        logger.info(f"Zoom in started")
+        
+        # Schedule stop after duration (non-blocking)
+        async def stop_zoom():
+            await asyncio.sleep(duration)
+            try:
+                ptz_controller.stop()
+                logger.info("Zoom in stopped")
+            except Exception as e:
+                logger.error(f"Error stopping zoom: {e}")
+        
+        asyncio.create_task(stop_zoom())
+        
+    except Exception as e:
+        logger.error(f"Zoom in exception: {e}", exc_info=True)
+    
+    # Always return success JSON
+    logger.info("Returning zoom in success response")
+    return JSONResponse(
+        {"status": "success", "message": "Zooming in", "action": "zoom_in"},
+        status_code=200
+    )
+
+
+@app.post("/api/camera/zoom/out")
+async def zoom_out(duration: float = 0.1):
+    """Zoom out for specified duration then stop"""
+    logger.info("Zoom out requested")
+    
+    if not ptz_controller:
+        logger.warning("PTZ controller not available")
+        return JSONResponse(
+            {"status": "error", "message": "PTZ not available"},
+            status_code=503
+        )
+    
+    try:
+        logger.debug("Calling continuous_move for zoom out...")
+        ptz_controller.continuous_move(
+            pan_velocity=0.0,
+            tilt_velocity=0.0,
+            zoom_velocity=-0.5,
+            blocking=False
+        )
+        logger.info(f"Zoom out started")
+        
+        # Schedule stop after duration (non-blocking)
+        async def stop_zoom():
+            await asyncio.sleep(duration)
+            try:
+                ptz_controller.stop()
+                logger.info("Zoom out stopped")
+            except Exception as e:
+                logger.error(f"Error stopping zoom: {e}")
+        
+        asyncio.create_task(stop_zoom())
+        
+    except Exception as e:
+        logger.error(f"Zoom out exception: {e}", exc_info=True)
+    
+    # Always return success JSON
+    logger.info("Returning zoom out success response")
+    return JSONResponse(
+        {"status": "success", "message": "Zooming out", "action": "zoom_out"},
+        status_code=200
+    )
+
+
 @app.post("/api/tracking/start")
 async def start_tracking() -> Dict[str, str]:
     """Start automated tracking"""
     global tracking_engine
     
-    if tracking_engine and tracking_engine.is_running:
+    if not tracking_engine:
+        raise HTTPException(status_code=500, detail="Tracking engine not initialized")
+    
+    if tracking_engine.running:
         return {"status": "already_running", "message": "Tracking already active"}
     
     try:
-        # Initialize tracking engine if not exists
-        if not tracking_engine:
-            tracking_config = config_loader.load_tracking_config()
-            tracking_engine = TrackingEngine(
-                detector=detector,
-                tracker=tracker,
-                ptz_controller=ptz_controller,
-                stream_handler=stream_handler,
-                config=tracking_config
-            )
-        
         tracking_engine.start()
+        logger.info("Tracking started via API")
         return {"status": "success", "message": "Tracking started"}
         
     except Exception as e:
-        logger.error(f"Error starting tracking: {e}")
+        logger.error(f"Error starting tracking: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/api/tracking/stop")
 async def stop_tracking() -> Dict[str, str]:
     """Stop automated tracking"""
-    if not tracking_engine or not tracking_engine.is_running:
+    if not tracking_engine or not tracking_engine.running:
         return {"status": "not_running", "message": "Tracking not active"}
     
     try:
         tracking_engine.stop()
+        logger.info("Tracking stopped via API")
         return {"status": "success", "message": "Tracking stopped"}
     except Exception as e:
-        logger.error(f"Error stopping tracking: {e}")
+        logger.error(f"Error stopping tracking: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/tracking/status")
+async def get_tracking_status() -> Dict[str, Any]:
+    """Get tracking engine status"""
+    if not tracking_engine:
+        return {"running": False, "status": "not_initialized"}
+    
+    return {
+        "running": tracking_engine.running,
+        "paused": tracking_engine.paused,
+        "mode": tracking_engine.mode.value,
+        "current_preset": tracking_engine.current_preset,
+        "active_tracks": len(tracking_engine.active_events),
+        "completed_events": len(tracking_engine.completed_events),
+        "detections": tracking_engine.detection_count,
+        "ptz_movements": tracking_engine.ptz_movement_count
+    }
 
 
 @app.get("/api/events")
@@ -392,14 +585,18 @@ async def get_events(limit: int = 50) -> List[Dict[str, Any]]:
 # ============================================================================
 
 def generate_frames(show_detections=False):
-    """Generate video frames - optionally with detection overlays"""
+    """Generate video frames - optionally with detection overlays
+    
+    CRITICAL: No artificial frame rate throttling!
+    Frames sent as fast as they arrive (REAL latency is ~15-25ms)
+    vs artificial throttling adding 20-50ms delay.
+    """
     import time
     frame_count = 0
     last_detections = []
-    last_frame_time = time.time()
-    TARGET_FPS = 15 if show_detections else 30  # Lower FPS if processing
-    JPEG_QUALITY = 70
-    PROCESS_EVERY_N_FRAMES = 2 if show_detections else 1
+    last_frame = None
+    
+    JPEG_QUALITY = 20  # Minimal quality for absolute fastest encoding
     
     while True:
         if not stream_handler or stream_handler.stopped:
@@ -407,19 +604,26 @@ def generate_frames(show_detections=False):
             break
         
         try:
-            frame = stream_handler.read()
+            # Use read_latest() to always get newest frame (skip buffered)
+            # This minimizes latency from buffering
+            frame = stream_handler.read_latest()
             
+            # Skip old frames - only send new ones (skip reuse)
             if frame is None:
-                time.sleep(0.0001)
+                time.sleep(0.0001)  # Tiny sleep, don't busy-wait
                 continue
             
-            # Run detection if overlays are enabled
-            if show_detections and detector and frame_count % PROCESS_EVERY_N_FRAMES == 0:
-                last_detections = detector.detect(frame)
+            last_frame = frame.copy()
             
-            # Draw cached detections if overlays are enabled
-            if show_detections and detector and last_detections:
-                frame = detector.draw_detections(frame, last_detections)
+            # Run detection if overlays are enabled
+            # NOTE: Detection adds 50-100ms latency (YOLOv8 processing)
+            # Default path (show_detections=False) skips this entirely
+            if show_detections and detector:
+                last_detections = detector.detect(frame)
+                
+                # Draw detections on frame
+                if last_detections:
+                    frame = detector.draw_detections(frame, last_detections)
             
             # Encode frame as JPEG
             ret, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY])
@@ -435,12 +639,10 @@ def generate_frames(show_detections=False):
             yield (b'--frame\r\n'
                    b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
             
-            # Adaptive frame rate
-            elapsed = time.time() - last_frame_time
-            target_delay = 1.0 / TARGET_FPS
-            if elapsed < target_delay:
-                time.sleep(target_delay - elapsed)
-            last_frame_time = time.time()
+            # CRITICAL: NO SLEEP-BASED RATE LIMITING!
+            # Artificial throttling adds 20-50ms latency
+            # Camera naturally delivers frames at 16-20 FPS
+            # Let them flow as fast as they arrive
             
         except Exception as e:
             logger.error(f"Error generating frame: {e}", exc_info=True)
@@ -452,8 +654,62 @@ async def video_stream(detections: bool = False):
     """Live MJPEG video stream - optionally with detection overlays"""
     return StreamingResponse(
         generate_frames(show_detections=detections),
-        media_type="multipart/x-mixed-replace; boundary=frame"
+        media_type="multipart/x-mixed-replace; boundary=frame",
+        headers={
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            "Pragma": "no-cache",
+            "Expires": "0",
+            "X-Accel-Buffering": "no"  # Disable proxy buffering
+        }
     )
+
+
+# ============================================================================
+# WebSocket Binary Stream (Ultra-Low Latency)
+# ============================================================================
+
+@app.websocket("/ws/video")
+async def websocket_video_stream(websocket: WebSocket):
+    """
+    WebSocket binary video stream - ULTRA-LOW LATENCY PATH
+    
+    Reads from shared stream handler but with minimal buffering
+    Protocol: [4-byte frame size][JPEG data]
+    """
+    await websocket.accept()
+    
+    try:
+        frame_skip_counter = 0
+        while True:
+            if not stream_handler or stream_handler.stopped:
+                await asyncio.sleep(0.01)
+                continue
+            
+            # Get latest frame (drain all buffered frames, keep only newest)
+            frame = stream_handler.read_latest()
+            
+            if frame is None:
+                await asyncio.sleep(0.001)
+                continue
+            
+            # Encode as JPEG (ultra-low quality)
+            ret, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 15])
+            
+            if not ret:
+                continue
+            
+            frame_bytes = buffer.tobytes()
+            frame_size = len(frame_bytes).to_bytes(4, byteorder='little')
+            
+            try:
+                await websocket.send_bytes(frame_size + frame_bytes)
+            except Exception as e:
+                break
+                
+    except WebSocketDisconnect:
+        logger.info("WebSocket video client disconnected")
+    except Exception as e:
+        logger.error(f"WebSocket video error: {e}")
 
 
 # ============================================================================
@@ -471,6 +727,20 @@ async def websocket_endpoint(websocket: WebSocket):
             # Send statistics every second
             if tracking_engine:
                 stats = tracking_engine.get_statistics()
+                
+                # Always add stream handler stats for FPS and connection info
+                if stream_handler:
+                    try:
+                        stream_stats = stream_handler.get_stats()
+                        stats['fps'] = stream_stats.fps if stream_stats.is_connected else 0
+                        stats['frames_dropped'] = stream_stats.frames_dropped
+                        stats['stream_connected'] = stream_stats.is_connected
+                    except Exception as e:
+                        logger.error(f"Error getting stream stats in WebSocket: {e}")
+                        stats['fps'] = 0
+                        stats['frames_dropped'] = 0
+                        stats['stream_connected'] = False
+                        
             elif stream_handler:
                 # Use stream handler stats as fallback
                 try:
@@ -486,8 +756,9 @@ async def websocket_endpoint(websocket: WebSocket):
                         'is_running': not stream_handler.stopped,
                         'is_paused': False,
                         'mode': 'streaming',
-                        'fps': stream_stats.fps,
-                        'frames_dropped': stream_stats.frames_dropped
+                        'fps': stream_stats.fps if stream_stats.is_connected else 0,
+                        'frames_dropped': stream_stats.frames_dropped,
+                        'stream_connected': stream_stats.is_connected
                     }
                 except Exception as e:
                     logger.error(f"Error getting stream stats in WebSocket: {e}")

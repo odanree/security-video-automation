@@ -1147,6 +1147,38 @@ def dahua_goto_preset(ip: str, username: str, password: str, preset_id: int):
 - [ONVIF Specification](https://www.onvif.org/profiles/)
 - [IP Camera Finder Tools](https://www.advanced-ip-scanner.com/)
 
+## Hardware Limitations & Known Constraints
+
+### Camera RTSP Stream Latency (~59-65ms)
+
+**Measured Reality:** The Dahua IP camera (192.168.1.107) delivers RTSP frames at ~59ms latency.
+
+**Breakdown:**
+- Camera → RTSP network transmission: ~59ms (network RTT + camera processing)
+- OpenCV JPEG encode: ~5ms (quality 15)
+- WebSocket transmission: ~1ms
+- Browser canvas render: ~0ms
+- **Total stream latency: ~65ms**
+
+**Why this matters:**
+- This is NOT a software optimization issue - it's camera physics
+- The camera admin interface (H.264) may *feel* smoother due to buffering/codec, but has similar latency
+- 65ms is actually good for IP cameras (many run 100-200ms)
+- PTZ controls are instant (~1-2ms) because they're local API calls, not video streams
+- The user perceives "stream delay" vs "instant controls" due to comparing different data paths
+
+**Optimization potential:**
+- Higher resolution increases bandwidth/latency (640×480 is practical limit)
+- Lower JPEG quality increases CPU cost but minimal latency improvement
+- H.264 hardware streaming (if camera supports) could improve smoothness, not latency
+- **Conclusion:** 65ms is optimal for this setup; further improvements require hardware upgrade
+
+### UI Layout Issues
+
+**Resolution sweet spot:** 640×480
+- Lower (480×360) pushes PTZ controls off-screen
+- Higher (800×600+) adds network bandwidth and latency for minimal UI improvement
+
 ## Performance Targets
 
 - **Detection latency**: < 100ms per frame
@@ -1156,6 +1188,28 @@ def dahua_goto_preset(ip: str, username: str, password: str, preset_id: int):
 - **Memory usage**: < 2GB
 
 ## Git Workflow & Commits
+
+### ⚠️ CRITICAL: Test Before Committing
+
+**NEVER commit changes without testing first.** This prevents broken code from entering the repository.
+
+**Testing Workflow:**
+1. Make changes to code
+2. **Restart dashboard or service** - Ensure changes are loaded
+3. **Test functionality** - Verify changes work as intended
+4. **Only then commit** - After verification
+
+**Example:** If optimizing WebSocket latency:
+1. Edit `src/web/app.py`
+2. Restart dashboard: `taskkill /F /IM python.exe; .\restart_dashboard.ps1`
+3. Open http://localhost:8000 and test latency
+4. Verify improvements work
+5. **THEN** commit with: `git commit -m "perf(stream): reduce latency..."`
+
+**If changes break functionality:**
+- Revert: `git checkout -- <file>`
+- Or create new branch and abandon old changes
+- Never commit broken code
 
 ### Branch Strategy
 **NEVER commit directly to `main`**. Always use feature branches and Pull Requests.

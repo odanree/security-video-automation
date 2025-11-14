@@ -9,6 +9,7 @@ class Dashboard {
         this.maxReconnectAttempts = 5;
         this.reconnectDelay = 3000;
         this.isTracking = false;
+        this.isDetectionMode = false;  // Track current detection mode for FPS display
         this.streamUrl = '/api/video/stream';
         
         this.init();
@@ -35,36 +36,30 @@ class Dashboard {
         this.ws = new WebSocket(wsUrl);
         
         this.ws.onopen = () => {
-            console.log('WebSocket connected');
             this.reconnectAttempts = 0;
             this.updateConnectionStatus(true);
         };
         
         this.ws.onmessage = (event) => {
-            console.log('WebSocket message received:', event.data);
             try {
                 const message = JSON.parse(event.data);
-                console.log('Parsed message:', message);
                 
                 // Handle different message types
                 if (message.type === 'statistics') {
-                    console.log('Statistics message:', message.data);
                     this.updateStatistics(message.data);
                 } else if (message.type === 'event') {
-                    console.log('Event message:', message.data);
                     this.addEventLog(message.data);
                 }
             } catch (e) {
-                console.error('Error parsing WebSocket message:', e);
+                // Silent fail
             }
         };
         
         this.ws.onerror = (error) => {
-            console.error('WebSocket error:', error);
+            // Silent fail
         };
         
         this.ws.onclose = () => {
-            console.log('WebSocket disconnected');
             this.updateConnectionStatus(false);
             this.attemptReconnect();
         };
@@ -73,7 +68,6 @@ class Dashboard {
     attemptReconnect() {
         if (this.reconnectAttempts < this.maxReconnectAttempts) {
             this.reconnectAttempts++;
-            console.log(`Reconnecting... (Attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts})`);
             setTimeout(() => this.connectWebSocket(), this.reconnectDelay);
         }
     }
@@ -98,35 +92,122 @@ class Dashboard {
     }
     
     // ========================================================================
-    // Video Stream
+    // Video Stream - WebSocket Binary (Ultra-Low Latency)
     // ========================================================================
     
     initializeVideoStream() {
-        const videoElement = document.getElementById('video-stream');
-        const videoOverlay = document.getElementById('video-overlay');
+        this.setupWebSocketVideoStream();
+    }
+    
+    setupWebSocketVideoStream() {
+        const canvas = document.getElementById('video-canvas');
+        const overlay = document.getElementById('video-overlay');
+        const ctx = canvas.getContext('2d', { willReadFrequently: true });
         
-        // Set the stream URL
-        videoElement.src = this.streamUrl;
+        if (!ctx) {
+            console.warn('Canvas context not available');
+            return;
+        }
         
-        // For MJPEG streams in <img> tags, use onload instead of oncanplay
-        videoElement.onload = () => {
-            console.log('Video stream loaded successfully');
-            videoOverlay.classList.add('hidden');
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const wsVideoUrl = `${protocol}//${window.location.host}/ws/video`;
+        
+        const wsVideo = new WebSocket(wsVideoUrl);
+        wsVideo.binaryType = 'arraybuffer';
+        
+        let firstFrame = false;
+        let partialBuffer = new ArrayBuffer(0);
+        const headerSize = 4;
+        
+        wsVideo.onopen = () => {
+            // Stream connected
         };
         
-        videoElement.onerror = () => {
-            console.error('Video stream error');
-            videoOverlay.classList.add('hidden');
-            document.getElementById('video-status').textContent = 'Stream unavailable';
-        };
-        
-        // Hide spinner after a short delay as fallback (MJPEG streams may not fire onload)
-        setTimeout(() => {
-            if (!videoOverlay.classList.contains('hidden')) {
-                console.log('Hiding spinner via timeout fallback');
-                videoOverlay.classList.add('hidden');
+        wsVideo.onmessage = (event) => {
+            try {
+                // Combine partial buffer with new data
+                const newData = new Uint8Array(event.data);
+                const oldData = new Uint8Array(partialBuffer);
+                
+                const combined = new Uint8Array(oldData.length + newData.length);
+                combined.set(oldData, 0);
+                combined.set(newData, oldData.length);
+                
+                let offset = 0;
+                
+                // Process all complete frames in buffer
+                while (offset + headerSize <= combined.length) {
+                    const view = new DataView(combined.buffer, combined.byteOffset + offset, headerSize);
+                    const frameSize = view.getUint32(0, true);
+                    
+                    if (offset + headerSize + frameSize > combined.length) {
+                        // Incomplete frame, keep in buffer
+                        break;
+                    }
+                    
+                    // Extract frame data
+                    const frameData = combined.slice(offset + headerSize, offset + headerSize + frameSize);
+                    offset += headerSize + frameSize;
+                    
+                    // Display frame
+                    this.displayFrameFromJPEG(canvas, ctx, frameData);
+                    
+                    if (!firstFrame) {
+                        overlay.classList.add('hidden');
+                        firstFrame = true;
+                    }
+                }
+                
+                // Keep remaining data for next message
+                if (offset < combined.length) {
+                    partialBuffer = combined.slice(offset).buffer;
+                } else {
+                    partialBuffer = new ArrayBuffer(0);
+                }
+                
+            } catch (e) {
+                console.error('Frame processing error:', e);
             }
-        }, 2000);
+        };
+        
+        wsVideo.onerror = (error) => {
+            console.error('WebSocket video error:', error);
+        };
+        
+        wsVideo.onclose = () => {
+            // Attempt reconnect after delay
+            setTimeout(() => this.setupWebSocketVideoStream(), 1000);
+        };
+    }
+    
+    displayFrameFromJPEG(canvas, ctx, jpegData) {
+        try {
+            // Convert binary JPEG data to blob
+            const blob = new Blob([jpegData], { type: 'image/jpeg' });
+            const url = URL.createObjectURL(blob);
+            
+            const img = new Image();
+            
+            img.onload = () => {
+                // Set canvas size to match image
+                if (canvas.width !== img.width || canvas.height !== img.height) {
+                    canvas.width = img.width;
+                    canvas.height = img.height;
+                }
+                
+                // Draw image to canvas
+                ctx.drawImage(img, 0, 0);
+                URL.revokeObjectURL(url);
+            };
+            
+            img.onerror = () => {
+                URL.revokeObjectURL(url);
+            };
+            
+            img.src = url;
+        } catch (e) {
+            console.error('JPEG decode error:', e);
+        }
     }
     
     toggleFullscreen() {
@@ -134,7 +215,7 @@ class Dashboard {
         
         if (!document.fullscreenElement) {
             videoContainer.requestFullscreen().catch(err => {
-                console.error('Fullscreen error:', err);
+                // Silent fail
             });
         } else {
             document.exitFullscreen();
@@ -146,43 +227,42 @@ class Dashboard {
     // ========================================================================
     
     updateStatistics(data) {
-        console.log('Updating statistics:', data);
-        
-        // DEBUG: Update page title to confirm function is called
-        document.title = `Stats: ${data.detections || 0} detections | Tracker`;
-        
         // Update stat cards - map backend keys to DOM elements with null checks
         const detectionsEl = document.getElementById('stat-detections');
         if (detectionsEl) {
             detectionsEl.textContent = data.detections || 0;
-            console.log('Updated detections element:', detectionsEl.textContent);
-        } else {
-            console.warn('stat-detections element not found!');
         }
         
         const tracksEl = document.getElementById('stat-tracks');
         if (tracksEl) {
             tracksEl.textContent = data.tracks || 0;
-            console.log('Updated tracks element:', tracksEl.textContent);
-        } else {
-            console.warn('stat-tracks element not found!');
         }
         
         const eventsEl = document.getElementById('stat-events');
         if (eventsEl) {
             eventsEl.textContent = data.completed_events || 0;
-            console.log('Updated events element:', eventsEl.textContent);
-        } else {
-            console.warn('stat-events element not found!');
         }
         
         // Display additional stats if available
         const fpsElement = document.getElementById('stat-fps');
         if (fpsElement) {
-            fpsElement.textContent = (data.processing_fps || data.fps || 0).toFixed(1);
-            console.log('Updated FPS element:', fpsElement.textContent);
-        } else {
-            console.warn('stat-fps element not found!');
+            // Get FPS value - prioritize fps, then processing_fps
+            const fps = parseFloat(data.fps) || parseFloat(data.processing_fps) || 0;
+            const streamConnected = data.stream_connected !== false;  // Default to true for compatibility
+            
+            // Only show '--' if explicitly disconnected AND fps is 0
+            if (!streamConnected && fps < 0.1) {
+                fpsElement.textContent = '--';
+                fpsElement.style.color = '#999999';
+            } else if (fps >= 0.5) {
+                // Show FPS value if it's meaningful (>= 0.5)
+                fpsElement.textContent = fps.toFixed(1);
+                fpsElement.style.color = fps > 10 ? '#00FF00' : fps > 5 ? '#FFD700' : '#FF4444';
+            } else {
+                // FPS very low but stream might be starting - show 0.0 instead of --
+                fpsElement.textContent = '0.0';
+                fpsElement.style.color = '#FF4444';
+            }
         }
         
         // Update frame and processing info
@@ -204,34 +284,63 @@ class Dashboard {
     
     async loadSystemStatus() {
         try {
-            const response = await fetch('/api/status');
-            const data = await response.json();
+            // Fetch system status and camera info in parallel
+            const [statusResponse, cameraResponse] = await Promise.all([
+                fetch('/api/status'),
+                fetch('/api/camera/info')
+            ]);
             
-            // Update system info with null checks - match HTML element IDs
+            const status = await statusResponse.json();
+            const camera = cameraResponse.ok ? await cameraResponse.json() : null;
+            
+            // Update system info with null checks
             const streamStatusEl = document.getElementById('status-stream');
             if (streamStatusEl) {
-                streamStatusEl.textContent = data.camera_connected ? '✓ Connected' : '✗ Disconnected';
-                streamStatusEl.className = data.camera_connected ? 'badge badge-active' : 'badge badge-inactive';
+                streamStatusEl.textContent = status.camera_connected ? '✓ Connected' : '✗ Disconnected';
+                streamStatusEl.className = status.camera_connected ? 'badge badge-active' : 'badge badge-inactive';
             }
             
             const detectorStatusEl = document.getElementById('status-detector');
             if (detectorStatusEl) {
-                detectorStatusEl.textContent = data.ai_model_loaded ? '✓ Loaded' : '✗ Not Loaded';
-                detectorStatusEl.className = data.ai_model_loaded ? 'badge badge-active' : 'badge badge-inactive';
+                detectorStatusEl.textContent = status.ai_model_loaded ? '✓ Loaded' : '✗ Not Loaded';
+                detectorStatusEl.className = status.ai_model_loaded ? 'badge badge-active' : 'badge badge-inactive';
             }
             
             const ptzStatusEl = document.getElementById('status-ptz');
             if (ptzStatusEl) {
-                ptzStatusEl.textContent = data.ptz_enabled ? '✓ Enabled' : '✗ Disabled';
-                ptzStatusEl.className = data.ptz_enabled ? 'badge badge-active' : 'badge badge-inactive';
+                ptzStatusEl.textContent = status.ptz_enabled ? '✓ Enabled' : '✗ Disabled';
+                ptzStatusEl.className = status.ptz_enabled ? 'badge badge-active' : 'badge badge-inactive';
+            }
+            
+            // Update camera info section
+            if (camera) {
+                const cameraNameEl = document.getElementById('camera-name');
+                if (cameraNameEl) {
+                    cameraNameEl.textContent = camera.name || 'Unknown';
+                }
+                
+                const cameraResolutionEl = document.getElementById('camera-resolution');
+                if (cameraResolutionEl) {
+                    const res = camera.resolution;
+                    cameraResolutionEl.textContent = Array.isArray(res) 
+                        ? `${res[0]}x${res[1]}` 
+                        : (res || '--');
+                }
+                
+                const streamFpsEl = document.getElementById('stream-fps');
+                if (streamFpsEl) {
+                    // Show current output FPS (will update on detection toggle)
+                    const outputFps = this.isDetectionMode ? camera.output_fps_detection || 15 : (camera.output_fps || 30);
+                    streamFpsEl.textContent = `${outputFps} (${this.isDetectionMode ? 'detection' : 'fast'})`;
+                }
             }
             
             // Update tracking status
-            this.isTracking = data.tracking_active;
+            this.isTracking = status.tracking_active;
             this.updateTrackingUI();
             
         } catch (error) {
-            console.error('Failed to load system status:', error);
+            // Silent fail
         }
     }
     
@@ -252,7 +361,6 @@ class Dashboard {
                 this.showNotification('Tracking started', 'success');
             }
         } catch (error) {
-            console.error('Failed to start tracking:', error);
             this.showNotification('Failed to start tracking', 'error');
         }
     }
@@ -270,7 +378,6 @@ class Dashboard {
                 this.showNotification('Tracking stopped', 'info');
             }
         } catch (error) {
-            console.error('Failed to stop tracking:', error);
             this.showNotification('Failed to stop tracking', 'error');
         }
     }
@@ -295,6 +402,27 @@ class Dashboard {
         }
     }
     
+    updateTrackingStats(data) {
+        /**Update tracking statistics display*/
+        // Update active tracks count if element exists
+        const activeTracksEl = document.getElementById('active-tracks');
+        if (activeTracksEl) {
+            activeTracksEl.textContent = data.active_tracks || 0;
+        }
+        
+        // Update detections count if element exists
+        const detectionsEl = document.getElementById('tracking-detections');
+        if (detectionsEl) {
+            detectionsEl.textContent = data.detections || 0;
+        }
+        
+        // Update PTZ movements count if element exists
+        const movementsEl = document.getElementById('ptz-movements');
+        if (movementsEl) {
+            movementsEl.textContent = data.ptz_movements || 0;
+        }
+    }
+    
     // ========================================================================
     // PTZ Camera Control
     // ========================================================================
@@ -306,14 +434,12 @@ class Dashboard {
             
             const select = document.getElementById('preset-select');
             if (!select) {
-                console.warn('preset-select element not found');
                 return;
             }
             
             select.innerHTML = '<option value="">Select Preset...</option>';
             
             if (!Array.isArray(data.presets)) {
-                console.warn('No presets returned from API');
                 return;
             }
             
@@ -325,14 +451,13 @@ class Dashboard {
             });
             
         } catch (error) {
-            console.error('Failed to load presets:', error);
+            // Silent fail
         }
     }
     
     async gotoPreset() {
         const select = document.getElementById('preset-select');
         if (!select) {
-            console.warn('preset-select element not found');
             return;
         }
         
@@ -349,7 +474,6 @@ class Dashboard {
                 this.showNotification(`Moving to ${select.options[select.selectedIndex].text}`, 'success');
             }
         } catch (error) {
-            console.error('Failed to move camera:', error);
             this.showNotification('Failed to move camera', 'error');
         }
     }
@@ -383,7 +507,7 @@ class Dashboard {
                 throw new Error('Move failed');
             }
         } catch (error) {
-            console.error('PTZ move error:', error);
+            // Silent fail
         }
     }
     
@@ -403,7 +527,7 @@ class Dashboard {
                 throw new Error('Move failed');
             }
         } catch (error) {
-            console.error('PTZ move error:', error);
+            // Silent fail
         }
     }
     
@@ -418,7 +542,41 @@ class Dashboard {
                 throw new Error('Stop failed');
             }
         } catch (error) {
-            console.error('PTZ stop error:', error);
+            // Silent fail
+        }
+    }
+    
+    async continuousZoom(velocity) {
+        // Continuous zoom for hold-down behavior
+        try {
+            const response = await fetch('/api/camera/move', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ 
+                    pan_velocity: 0.0,
+                    tilt_velocity: 0.0,
+                    zoom_velocity: velocity
+                })
+            });
+            if (!response.ok) {
+                console.error('Zoom failed:', response.status, response.statusText);
+            }
+        } catch (error) {
+            console.error('Zoom error:', error.message);
+        }
+    }
+    
+    async stopZoom() {
+        try {
+            const response = await fetch('/api/camera/stop', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
+            });
+            if (!response.ok) {
+                console.error('Stop failed:', response.status, response.statusText);
+            }
+        } catch (error) {
+            console.error('Stop error:', error.message);
         }
     }
     
@@ -442,7 +600,6 @@ class Dashboard {
             
             const eventsContainer = document.getElementById('events-container');
             if (!eventsContainer) {
-                console.warn('events-container not found');
                 return;
             }
             
@@ -485,7 +642,7 @@ class Dashboard {
             `).join('');
             
         } catch (error) {
-            console.error('Failed to load events:', error);
+            // Silent fail
         }
     }
     
@@ -501,19 +658,49 @@ class Dashboard {
     // ========================================================================
     
     startPolling() {
+        // Load statistics immediately on startup
+        (async () => {
+            try {
+                const response = await fetch('/api/statistics');
+                if (response.ok) {
+                    const data = await response.json();
+                    this.updateStatistics(data);
+                }
+            } catch (e) {
+                // Silent fail
+            }
+        })();
+        
+        // Load system status immediately on startup
+        this.loadSystemStatus();
+        
         // Poll statistics every 2 seconds as fallback
         setInterval(async () => {
             try {
                 const response = await fetch('/api/statistics');
                 if (response.ok) {
                     const data = await response.json();
-                    console.log('Polled statistics:', data);
                     this.updateStatistics(data);
                 }
             } catch (e) {
-                console.error('Error polling statistics:', e);
+                // Silent fail
             }
         }, 2000);
+        
+        // Poll tracking status every 3 seconds
+        setInterval(async () => {
+            try {
+                const response = await fetch('/api/tracking/status');
+                if (response.ok) {
+                    const data = await response.json();
+                    this.isTracking = data.running;
+                    this.updateTrackingUI();
+                    this.updateTrackingStats(data);
+                }
+            } catch (e) {
+                // Silent fail
+            }
+        }, 3000);
         
         // Reload events every 5 seconds
         setInterval(() => this.loadEvents(), 5000);
@@ -571,6 +758,63 @@ class Dashboard {
         // Preset selection
         document.getElementById('btn-goto-preset')?.addEventListener('click', () => this.gotoPreset());
         
+        // Zoom controls - hold-down behavior
+        const zoomInBtn = document.getElementById('btn-zoom-in');
+        const zoomOutBtn = document.getElementById('btn-zoom-out');
+        const self = this;
+        
+        if (zoomInBtn) {
+            let zoomInterval = null;
+            let isActive = false;
+            
+            zoomInBtn.addEventListener('mousedown', (e) => {
+                e.preventDefault();
+                if (isActive) return;
+                isActive = true;
+                zoomInBtn.style.opacity = '0.5';
+                self.continuousZoom(0.5);
+                self.showNotification('Zooming in...', 'info');
+                zoomInterval = setInterval(() => {
+                    self.continuousZoom(0.5);
+                }, 100);
+            });
+            
+            zoomInBtn.addEventListener('mouseup', () => {
+                if (!isActive) return;
+                isActive = false;
+                clearInterval(zoomInterval);
+                self.stopZoom();
+                zoomInBtn.style.opacity = '1';
+                self.showNotification('Zoom stopped', 'info');
+            });
+        }
+        
+        if (zoomOutBtn) {
+            let zoomInterval = null;
+            let isActive = false;
+            
+            zoomOutBtn.addEventListener('mousedown', (e) => {
+                e.preventDefault();
+                if (isActive) return;
+                isActive = true;
+                zoomOutBtn.style.opacity = '0.5';
+                self.continuousZoom(-0.5);
+                self.showNotification('Zooming out...', 'info');
+                zoomInterval = setInterval(() => {
+                    self.continuousZoom(-0.5);
+                }, 100);
+            });
+            
+            zoomOutBtn.addEventListener('mouseup', () => {
+                if (!isActive) return;
+                isActive = false;
+                clearInterval(zoomInterval);
+                self.stopZoom();
+                zoomOutBtn.style.opacity = '1';
+                self.showNotification('Zoom stopped', 'info');
+            });
+        }
+        
         // Speed slider
         document.getElementById('ptz-speed')?.addEventListener('input', () => this.updateSpeedDisplay());
         
@@ -586,22 +830,62 @@ class Dashboard {
     // ========================================================================
     
     toggleDetections() {
-        const videoImg = document.getElementById('video-stream');
+        const canvas = document.getElementById('video-canvas');
         const btn = document.getElementById('btn-toggle-detections');
+        const overlay = document.getElementById('video-overlay');
         
-        if (!videoImg) return;
+        if (!canvas) return;
         
-        // Toggle between normal and detection stream
-        if (videoImg.src.includes('stream-detection')) {
-            // Switch back to normal stream
-            videoImg.src = '/api/video/stream';
-            btn.style.opacity = '0.5';
-            console.log('Switched to fast stream (no detection overlays)');
-        } else {
-            // Switch to detection stream
-            videoImg.src = '/api/video/stream-detection';
+        // Toggle detection mode
+        this.isDetectionMode = !this.isDetectionMode;
+        
+        if (this.isDetectionMode) {
+            // Switch to MJPEG stream with detection overlays
             btn.style.opacity = '1.0';
-            console.log('Switched to detection stream (with overlays)');
+            btn.title = 'Disable Detection Overlays (lower latency without detection)';
+            
+            // Show loading indicator
+            overlay.classList.remove('hidden');
+            
+            // Create img element for MJPEG stream
+            const img = document.createElement('img');
+            img.id = 'video-stream-detection';
+            img.src = '/api/video/stream?detections=true&t=' + Date.now();
+            img.style.width = '100%';
+            img.style.height = 'auto';
+            img.style.display = 'block';
+            
+            // Replace canvas with img
+            canvas.style.display = 'none';
+            canvas.parentElement.insertBefore(img, canvas);
+            
+            img.onload = () => {
+                overlay.classList.add('hidden');
+            };
+            
+            img.onerror = () => {
+                overlay.classList.add('hidden');
+            };
+            
+        } else {
+            // Switch back to WebSocket stream (no detection, faster)
+            btn.style.opacity = '0.5';
+            btn.title = 'Enable Detection Overlays (adds ~50-100ms latency)';
+            
+            // Remove MJPEG img if it exists
+            const img = document.getElementById('video-stream-detection');
+            if (img) {
+                img.remove();
+            }
+            
+            // Show canvas again
+            canvas.style.display = 'block';
+            overlay.classList.remove('hidden');
+            
+            // WebSocket should auto-reconnect
+            setTimeout(() => {
+                overlay.classList.add('hidden');
+            }, 2000);
         }
     }
     
@@ -615,10 +899,78 @@ class Dashboard {
     }
     
     showNotification(message, type = 'info') {
-        console.log(`[${type.toUpperCase()}] ${message}`);
-        // TODO: Implement toast notification UI
+        const container = document.getElementById('notifications-container');
+        if (!container) return;
+        
+        // Create notification element
+        const notification = document.createElement('div');
+        notification.className = `notification notification-${type}`;
+        notification.style.cssText = `
+            padding: 12px 16px;
+            border-radius: 6px;
+            font-size: 14px;
+            font-weight: 500;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            animation: slideIn 0.3s ease-out;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+            min-width: 200px;
+        `;
+        
+        // Set color based on type
+        const colors = {
+            'success': { bg: '#10b981', text: '#fff', icon: '✓' },
+            'error': { bg: '#ef4444', text: '#fff', icon: '✕' },
+            'info': { bg: '#3b82f6', text: '#fff', icon: 'ℹ' },
+            'warning': { bg: '#f59e0b', text: '#fff', icon: '⚠' }
+        };
+        
+        const color = colors[type] || colors['info'];
+        notification.style.backgroundColor = color.bg;
+        notification.style.color = color.text;
+        
+        notification.innerHTML = `
+            <span style="font-size: 16px; font-weight: bold;">${color.icon}</span>
+            <span>${message}</span>
+        `;
+        
+        container.appendChild(notification);
+        
+        // Auto-remove after 3 seconds
+        setTimeout(() => {
+            notification.style.animation = 'slideOut 0.3s ease-out';
+            setTimeout(() => notification.remove(), 300);
+        }, 3000);
     }
 }
+
+// Add CSS animations for notifications
+const style = document.createElement('style');
+style.textContent = `
+    @keyframes slideIn {
+        from {
+            transform: translateX(400px);
+            opacity: 0;
+        }
+        to {
+            transform: translateX(0);
+            opacity: 1;
+        }
+    }
+    
+    @keyframes slideOut {
+        from {
+            transform: translateX(0);
+            opacity: 1;
+        }
+        to {
+            transform: translateX(400px);
+            opacity: 0;
+        }
+    }
+`;
+document.head.appendChild(style);
 
 // Initialize dashboard when DOM is ready
 document.addEventListener('DOMContentLoaded', () => {
