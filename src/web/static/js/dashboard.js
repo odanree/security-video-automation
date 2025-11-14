@@ -180,19 +180,26 @@ class Dashboard {
         // Display additional stats if available
         const fpsElement = document.getElementById('stat-fps');
         if (fpsElement) {
-            // Only update FPS if stream is connected or value is meaningful
-            const fps = data.fps || data.processing_fps || 0;
+            // Get FPS value - prioritize fps, then processing_fps
+            const fps = parseFloat(data.fps) || parseFloat(data.processing_fps) || 0;
             const streamConnected = data.stream_connected !== false;  // Default to true for compatibility
             
-            if (streamConnected || fps > 0) {
-                fpsElement.textContent = fps.toFixed(1);
-                fpsElement.style.color = fps > 10 ? '#00FF00' : fps > 5 ? '#FFD700' : '#FF4444';
-            } else {
-                // Show loading state if stream not connected
+            // Only show '--' if explicitly disconnected AND fps is 0
+            if (!streamConnected && fps < 0.1) {
                 fpsElement.textContent = '--';
                 fpsElement.style.color = '#999999';
+                console.log('Stream disconnected, showing placeholder');
+            } else if (fps >= 0.5) {
+                // Show FPS value if it's meaningful (>= 0.5)
+                fpsElement.textContent = fps.toFixed(1);
+                fpsElement.style.color = fps > 10 ? '#00FF00' : fps > 5 ? '#FFD700' : '#FF4444';
+                console.log('Updated FPS:', fps.toFixed(1));
+            } else {
+                // FPS very low but stream might be starting - show 0.0 instead of --
+                fpsElement.textContent = '0.0';
+                fpsElement.style.color = '#FF4444';
+                console.log('FPS very low:', fps);
             }
-            console.log('Updated FPS element:', fpsElement.textContent, 'connected:', streamConnected);
         } else {
             console.warn('stat-fps element not found!');
         }
