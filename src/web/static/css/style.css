@@ -205,13 +205,15 @@ body {
 .video-container {
     position: relative;
     width: 100%;
-    padding-bottom: 56.25%; /* 16:9 aspect ratio */
+    padding-bottom: 75%; /* 4:3 aspect ratio (640x480) */
     background-color: #000;
     overflow: hidden;
-    max-height: 80vh; /* Take up to 80% of viewport height */
+    max-height: 70vh; /* Take up to 70% of viewport height */
 }
 
-#video-stream {
+#video-stream,
+#video-canvas,
+#video-stream-detection {
     position: absolute;
     top: 0;
     left: 0;

@@ -1147,6 +1147,38 @@ def dahua_goto_preset(ip: str, username: str, password: str, preset_id: int):
 - [ONVIF Specification](https://www.onvif.org/profiles/)
 - [IP Camera Finder Tools](https://www.advanced-ip-scanner.com/)
 
+## Hardware Limitations & Known Constraints
+
+### Camera RTSP Stream Latency (~59-65ms)
+
+**Measured Reality:** The Dahua IP camera (192.168.1.107) delivers RTSP frames at ~59ms latency.
+
+**Breakdown:**
+- Camera → RTSP network transmission: ~59ms (network RTT + camera processing)
+- OpenCV JPEG encode: ~5ms (quality 15)
+- WebSocket transmission: ~1ms
+- Browser canvas render: ~0ms
+- **Total stream latency: ~65ms**
+
+**Why this matters:**
+- This is NOT a software optimization issue - it's camera physics
+- The camera admin interface (H.264) may *feel* smoother due to buffering/codec, but has similar latency
+- 65ms is actually good for IP cameras (many run 100-200ms)
+- PTZ controls are instant (~1-2ms) because they're local API calls, not video streams
+- The user perceives "stream delay" vs "instant controls" due to comparing different data paths
+
+**Optimization potential:**
+- Higher resolution increases bandwidth/latency (640×480 is practical limit)
+- Lower JPEG quality increases CPU cost but minimal latency improvement
+- H.264 hardware streaming (if camera supports) could improve smoothness, not latency
+- **Conclusion:** 65ms is optimal for this setup; further improvements require hardware upgrade
+
+### UI Layout Issues
+
+**Resolution sweet spot:** 640×480
+- Lower (480×360) pushes PTZ controls off-screen
+- Higher (800×600+) adds network bandwidth and latency for minimal UI improvement
+
 ## Performance Targets
 
 - **Detection latency**: < 100ms per frame
