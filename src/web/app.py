@@ -593,13 +593,13 @@ def generate_frames(show_detections=False):
     
     # Different FPS targets per mode
     if show_detections:
-        TARGET_FPS = 15  # Detection mode: 15 FPS with detection overlays (2x slower than fast)
+        TARGET_FPS = 10  # Detection mode: 10 FPS with detection overlays
         PROCESS_EVERY_N_FRAMES = 1  # Process every frame
     else:
-        TARGET_FPS = 30  # Fast mode: 30 FPS, no processing
+        TARGET_FPS = 20  # Fast mode: 20 FPS (realistic streaming target)
         PROCESS_EVERY_N_FRAMES = 1  # Not used in fast mode
     
-    JPEG_QUALITY = 75  # Slightly higher quality for better visuals
+    JPEG_QUALITY = 35  # Very low quality = ultra-fast streaming = minimal latency
     
     while True:
         if not stream_handler or stream_handler.stopped:
@@ -607,17 +607,16 @@ def generate_frames(show_detections=False):
             break
         
         try:
-            frame = stream_handler.read()
+            # Use read_latest() to always get newest frame (skip buffered)
+            # This minimizes latency from buffering
+            frame = stream_handler.read_latest()
             
-            # If no new frame, reuse last frame to maintain FPS
+            # Skip old frames - only send new ones (skip reuse)
             if frame is None:
-                if last_frame is not None:
-                    frame = last_frame
-                else:
-                    time.sleep(0.001)
-                    continue
-            else:
-                last_frame = frame.copy()
+                time.sleep(0.001)  # Brief sleep, don't reuse old frame
+                continue
+            
+            last_frame = frame.copy()
             
             # Run detection if overlays are enabled
             if show_detections and detector:

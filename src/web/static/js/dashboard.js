@@ -99,24 +99,21 @@ class Dashboard {
         const videoElement = document.getElementById('video-stream');
         const videoOverlay = document.getElementById('video-overlay');
         
-        // Set the stream URL
-        videoElement.src = this.streamUrl;
+        // Source is already set in HTML to /api/video/stream
+        // Just set up event handlers
         
-        // For MJPEG streams in <img> tags, use onload instead of oncanplay
+        // Hide overlay when image loads
         videoElement.onload = () => {
             videoOverlay.classList.add('hidden');
         };
         
         videoElement.onerror = () => {
             videoOverlay.classList.add('hidden');
-            document.getElementById('video-status').textContent = 'Stream unavailable';
         };
         
-        // Hide spinner after a short delay as fallback (MJPEG streams may not fire onload)
+        // Fallback: hide spinner after 2 seconds regardless
         setTimeout(() => {
-            if (!videoOverlay.classList.contains('hidden')) {
-                videoOverlay.classList.add('hidden');
-            }
+            videoOverlay.classList.add('hidden');
         }, 2000);
     }
     
@@ -748,23 +745,20 @@ class Dashboard {
         // Determine target URL based on current state
         let targetUrl;
         if (videoImg.src.includes('detections=true')) {
-            // Switch back to normal stream (30 FPS, no overlays)
+            // Switch back to normal stream (no overlays, faster)
             targetUrl = '/api/video/stream';
             this.isDetectionMode = false;
             btn.style.opacity = '0.5';
-            btn.title = 'Enable Detection Overlays (15 FPS)';
+            btn.title = 'Enable Detection Overlays';
         } else {
-            // Switch to detection stream (15 FPS, with overlays)
+            // Switch to detection stream (with overlays)
             targetUrl = '/api/video/stream?detections=true';
             this.isDetectionMode = true;
             btn.style.opacity = '1.0';
-            btn.title = 'Disable Detection Overlays (30 FPS)';
+            btn.title = 'Disable Detection Overlays';
         }
         
-        // Force a new stream connection by:
-        // 1. Clearing the src (stops current stream)
-        // 2. Small delay to ensure disconnect
-        // 3. Set new src with cache buster
+        // Force a new stream connection by clearing and resetting src
         videoImg.src = '';
         
         setTimeout(() => {
