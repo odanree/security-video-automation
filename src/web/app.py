@@ -341,7 +341,7 @@ async def move_to_preset(preset_token: str, speed: float = 0.5) -> Dict[str, str
 
 @app.post("/api/camera/move")
 async def move_camera(move_data: Dict[str, float]) -> Dict[str, str]:
-    """Continuous camera movement (non-blocking)"""
+    """Continuous camera movement with automatic stop after duration"""
     if not ptz_controller:
         raise HTTPException(status_code=503, detail="PTZ controller not available")
     
@@ -351,17 +351,18 @@ async def move_camera(move_data: Dict[str, float]) -> Dict[str, str]:
         zoom = move_data.get('zoom_velocity', move_data.get('zoom', 0.0))
         duration = move_data.get('duration', 0.5)
         
-        # Non-blocking movement - returns immediately
+        # CRITICAL: Use blocking=True to automatically stop after duration
+        # blocking=False would leave camera moving indefinitely!
         ptz_controller.continuous_move(
             pan_velocity=pan,
             tilt_velocity=tilt,
             zoom_velocity=zoom,
             duration=duration,
-            blocking=False  # Don't wait for movement to complete
+            blocking=True  # CRITICAL: Auto-stop after duration
         )
         return {
             "status": "success",
-            "message": f"Moving camera (pan={pan}, tilt={tilt}, zoom={zoom})"
+            "message": f"Moved camera (pan={pan}, tilt={tilt}, zoom={zoom}) for {duration}s"
         }
     except Exception as e:
         logger.error(f"Error moving camera: {e}")

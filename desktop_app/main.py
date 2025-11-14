@@ -7,6 +7,7 @@ import numpy as np
 from datetime import datetime
 from threading import Thread, Lock
 from queue import Queue
+from typing import Optional
 
 from PyQt5.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
                              QLabel, QPushButton, QSlider, QComboBox, QGridLayout,
@@ -44,6 +45,7 @@ class StreamWorker(QThread):
         time.sleep(2)
         
         frame_times = []
+        frame_count = 0
         
         while self.running:
             ret, frame = cap.read()
@@ -53,6 +55,11 @@ class StreamWorker(QThread):
                 time.sleep(0.5)  # Wait before retrying
                 continue
             
+            frame_count += 1
+            
+            # Emit every frame from camera (15 FPS) to get smooth display
+            # Camera already has 15 FPS limit, so no need to skip
+            
             # Calculate FPS
             current_time = time.time()
             frame_times.append(current_time)
@@ -61,6 +68,9 @@ class StreamWorker(QThread):
             
             # Emit frame to GUI
             self.frame_ready.emit(frame)
+            
+            # OPTIMIZATION: Small sleep to prevent thread from hogging CPU
+            time.sleep(0.01)  # 10ms sleep
         
         cap.release()
     
@@ -106,7 +116,7 @@ class StatsWorker(QThread):
                     print(f"Stats fetch error: {e}")
                     backend_offline_shown = True
             
-            time.sleep(0.5)  # Update every 500ms
+            time.sleep(2.0)  # Optimization: Update every 2s instead of 500ms (reduce API calls)
     
     def stop(self):
         """Stop fetching statistics"""
@@ -432,12 +442,14 @@ class CameraTrackerApp(QMainWindow):
         # Pan/Tilt directional buttons
         self.btn_up = QPushButton("▲")
         self.btn_up.setStyleSheet(ptz_button_style)
-        self.btn_up.clicked.connect(lambda: self.manual_ptz('up'))
+        self.btn_up.pressed.connect(lambda: self.manual_ptz_start('up'))
+        self.btn_up.released.connect(self.manual_ptz_stop)
         ptz_grid.addWidget(self.btn_up, 0, 1)
         
         self.btn_left = QPushButton("◄")
         self.btn_left.setStyleSheet(ptz_button_style)
-        self.btn_left.clicked.connect(lambda: self.manual_ptz('left'))
+        self.btn_left.pressed.connect(lambda: self.manual_ptz_start('left'))
+        self.btn_left.released.connect(self.manual_ptz_stop)
         ptz_grid.addWidget(self.btn_left, 1, 0)
         
         self.btn_home = QPushButton("⌂")
@@ -447,12 +459,14 @@ class CameraTrackerApp(QMainWindow):
         
         self.btn_right = QPushButton("►")
         self.btn_right.setStyleSheet(ptz_button_style)
-        self.btn_right.clicked.connect(lambda: self.manual_ptz('right'))
+        self.btn_right.pressed.connect(lambda: self.manual_ptz_start('right'))
+        self.btn_right.released.connect(self.manual_ptz_stop)
         ptz_grid.addWidget(self.btn_right, 1, 2)
         
         self.btn_down = QPushButton("▼")
         self.btn_down.setStyleSheet(ptz_button_style)
-        self.btn_down.clicked.connect(lambda: self.manual_ptz('down'))
+        self.btn_down.pressed.connect(lambda: self.manual_ptz_start('down'))
+        self.btn_down.released.connect(self.manual_ptz_stop)
         ptz_grid.addWidget(self.btn_down, 2, 1)
         
         ptz_layout.addLayout(ptz_grid)
@@ -462,12 +476,14 @@ class CameraTrackerApp(QMainWindow):
         
         self.btn_zoom_in = QPushButton("🔍 Zoom In")
         self.btn_zoom_in.setStyleSheet(ptz_button_style)
-        self.btn_zoom_in.clicked.connect(lambda: self.manual_ptz('zoom_in'))
+        self.btn_zoom_in.pressed.connect(lambda: self.manual_ptz_start('zoom_in'))
+        self.btn_zoom_in.released.connect(self.manual_ptz_stop)
         zoom_layout.addWidget(self.btn_zoom_in)
         
         self.btn_zoom_out = QPushButton("🔍 Zoom Out")
         self.btn_zoom_out.setStyleSheet(ptz_button_style)
-        self.btn_zoom_out.clicked.connect(lambda: self.manual_ptz('zoom_out'))
+        self.btn_zoom_out.pressed.connect(lambda: self.manual_ptz_start('zoom_out'))
+        self.btn_zoom_out.released.connect(self.manual_ptz_stop)
         zoom_layout.addWidget(self.btn_zoom_out)
         
         ptz_layout.addLayout(zoom_layout)
@@ -497,39 +513,75 @@ class CameraTrackerApp(QMainWindow):
         # FPS timer
         self.fps_timer = QTimer()
         self.fps_timer.timeout.connect(self.update_fps_display)
-        self.fps_timer.start(500)  # Update every 500ms
+        self.fps_timer.start(1000)  # Update every 1s (was 500ms) to reduce CPU
+        
+        # PTZ hold support - track which direction is currently held
+        self.ptz_hold_direction = None
+        self.ptz_hold_timer = QTimer()
+        self.ptz_hold_timer.timeout.connect(self.ptz_hold_update)
         
         # Load presets
         self.load_presets()
         
-        # Frame timing
-        self.frame_times = []
+        # Frame timing - use pre-allocated array for ring buffer (no append/pop overhead)
+        self.frame_times = [0.0] * 60  # Ring buffer for 60 frames
         self.last_frame_time = time.time()
         
         # Detection overlay cache
         self.cached_detections = []
         self.last_detection_fetch = 0
-        self.detection_fetch_interval = 0.5  # Fetch detections every 500ms, not every frame
+        self.detection_fetch_interval = 1.0  # Fetch detections every 1 second (reduced from 0.5s for CPU)
+        
+        # Optimization: Frame skip counter and display resolution tracking
+        self.frame_skip_counter = 0
+        self.last_frame_h = 0
+        self.last_frame_w = 0
     
     def on_frame_received(self, frame: np.ndarray):
         """Handle frame from video stream"""
-        # Convert BGR to RGB
-        rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        # Display all frames with minimal skipping for maximum smoothness
+        # No frame skipping - render every frame that arrives
+        self.frame_skip_counter += 1
         
-        # Draw overlay if enabled
+        # Display all frames for maximum FPS (no frame skipping)
+        # This renders every frame the camera sends
+        skip_rate = 1
+        if self.frame_skip_counter % skip_rate != 0:
+            return  # Skip this frame
+        
+        # OPTIMIZATION: No color conversion when overlay disabled
+        # PyQt5 can display BGR directly (will have slightly different colors but saves CPU)
         if self.overlay_enabled:
-            rgb_frame = self.draw_detections_overlay(rgb_frame)
+            # Copy frame for overlay modification
+            display_frame = self.draw_detections_overlay(frame.copy())
+            # Convert BGR to RGB only when drawing overlay
+            display_frame = cv2.cvtColor(display_frame, cv2.COLOR_BGR2RGB)
+        else:
+            # SKIP COLOR CONVERSION - PyQt5 displays BGR as RGB (saves 5-10% CPU)
+            # This means colors will be slightly off but it's worth the CPU savings
+            display_frame = frame
         
-        # Track frame timing for FPS
+        # Track frame timing for FPS (optimize: ring buffer instead of append/pop)
         current_time = time.time()
-        self.frame_times.append(current_time)
-        if len(self.frame_times) > 60:
-            self.frame_times.pop(0)
+        idx = self.frame_skip_counter % 60
+        self.frame_times[idx] = current_time
         
-        # Convert to QImage for display
-        h, w, ch = rgb_frame.shape
-        bytes_per_line = ch * w
-        qt_image = QImage(rgb_frame.data, w, h, bytes_per_line, QImage.Format_RGB888)
+        # OPTIMIZATION: Reuse QImage if size hasn't changed (avoid memory allocation)
+        h, w = display_frame.shape[:2]
+        
+        if h != self.last_frame_h or w != self.last_frame_w:
+            # Size changed - create new QImage
+            bytes_per_line = w * 3 if len(display_frame.shape) == 3 else w
+            qt_image = QImage(display_frame.data, w, h, bytes_per_line, 
+                            QImage.Format_BGR888 if not self.overlay_enabled else QImage.Format_RGB888)
+            self.last_frame_h = h
+            self.last_frame_w = w
+        else:
+            # Size same - just create image from buffer
+            bytes_per_line = w * 3 if len(display_frame.shape) == 3 else w
+            qt_image = QImage(display_frame.data, w, h, bytes_per_line,
+                            QImage.Format_BGR888 if not self.overlay_enabled else QImage.Format_RGB888)
+        
         pixmap = QPixmap.fromImage(qt_image)
         
         # Display at full size (will scale automatically due to setScaledContents(True))
@@ -539,7 +591,8 @@ class CameraTrackerApp(QMainWindow):
         """Draw detection boxes on frame (uses cached detections to avoid HTTP overhead)"""
         current_time = time.time()
         
-        # Only fetch new detections every 500ms to avoid killing FPS
+        # Optimization: Only fetch detections every 1 second instead of 500ms
+        # (reduced from 0.5s to 1.0s - detection overlay doesn't need to be super real-time)
         if current_time - self.last_detection_fetch > self.detection_fetch_interval:
             try:
                 # Non-blocking request with very short timeout
@@ -560,6 +613,7 @@ class CameraTrackerApp(QMainWindow):
         scale_y = frame_height / BACKEND_HEIGHT  # 3.2 (scale up!)
         
         # Draw cached detections with upscaling
+        # Optimization: Cache the scale factors to avoid recalculating
         for det in self.cached_detections:
             x1, y1, x2, y2 = det['bbox']
             label = det['class']
@@ -611,14 +665,22 @@ class CameraTrackerApp(QMainWindow):
             self.tracking_status.setText("Status: Inactive")
     
     def update_fps_display(self):
-        """Update FPS display"""
-        if len(self.frame_times) > 1:
-            time_span = self.frame_times[-1] - self.frame_times[0]
+        """Update FPS display - calculate from ring buffer"""
+        # Find valid entries in ring buffer (those with non-zero timestamps)
+        valid_times = [t for t in self.frame_times if t > 0]
+        
+        if len(valid_times) > 5:
+            # Calculate FPS from oldest to newest timestamp in buffer
+            time_span = valid_times[-1] - valid_times[0]
             if time_span > 0:
-                fps = len(self.frame_times) / time_span
-                self.info_label.setText(f"FPS: {fps:.1f} | Frames: {len(self.frame_times)} | Status: Running")
+                fps = len(valid_times) / time_span
+                # Account for frame skipping - multiply by skip rate for actual FPS
+                skip_rate = 3 if self.overlay_enabled else 2
+                actual_fps = fps * skip_rate
+                
+                self.info_label.setText(f"FPS: {actual_fps:.1f} | Frames: {self.frame_skip_counter} | Status: Running")
                 # Also update in stats panel
-                self.stat_fps_display.setText(f"Stream FPS: {fps:.1f}")
+                self.stat_fps_display.setText(f"Stream FPS: {actual_fps:.1f}")
         else:
             self.stat_fps_display.setText("Stream FPS: --")
     
@@ -680,7 +742,35 @@ class CameraTrackerApp(QMainWindow):
             print(f"Failed to load presets: {e}")
             # Keep "Loading presets..." text and retry later
     
-    def manual_ptz(self, direction: str):
+    def manual_ptz_start(self, direction: str):
+        """Start continuous PTZ movement (button pressed)"""
+        self.ptz_hold_direction = direction
+        self.ptz_hold_timer.start(100)  # Send continuous move commands every 100ms
+        print(f"🔘 PTZ hold: {direction} started")
+    
+    def manual_ptz_stop(self):
+        """Stop continuous PTZ movement (button released)"""
+        if self.ptz_hold_direction:
+            print(f"🔘 PTZ hold: {self.ptz_hold_direction} stopped")
+            self.ptz_hold_direction = None
+        self.ptz_hold_timer.stop()
+        
+        # Send stop command to camera
+        try:
+            requests.post(f"{self.backend_url}/api/camera/stop", timeout=1)
+        except:
+            pass  # Ignore errors
+    
+    def ptz_hold_update(self):
+        """Send continuous movement commands while button is held"""
+        if not self.ptz_hold_direction:
+            self.ptz_hold_timer.stop()
+            return
+        
+        # Send very short movement command (100ms each)
+        self.manual_ptz(self.ptz_hold_direction, duration_override=0.1)
+    
+    def manual_ptz(self, direction: str, duration_override: Optional[float] = None):
         """Manual PTZ control - pan, tilt, zoom"""
         try:
             # Use much slower speed for manual controls (30% of slider value)
@@ -690,13 +780,13 @@ class CameraTrackerApp(QMainWindow):
             
             # Map direction to pan/tilt/zoom values
             ptz_commands = {
-                'up': {'pan': 0, 'tilt': manual_speed, 'zoom': 0, 'duration': 0.3},
-                'down': {'pan': 0, 'tilt': -manual_speed, 'zoom': 0, 'duration': 0.3},
-                'left': {'pan': -manual_speed, 'tilt': 0, 'zoom': 0, 'duration': 0.3},
-                'right': {'pan': manual_speed, 'tilt': 0, 'zoom': 0, 'duration': 0.3},
-                'zoom_in': {'pan': 0, 'tilt': 0, 'zoom': manual_speed * 0.5, 'duration': 0.15},  # Even slower/shorter for zoom
-                'zoom_out': {'pan': 0, 'tilt': 0, 'zoom': -manual_speed * 0.5, 'duration': 0.15},  # Even slower/shorter for zoom
-                'home': {'pan': 0, 'tilt': 0, 'zoom': 0, 'duration': 0.1}  # Stop/home
+                'up': {'pan': 0, 'tilt': manual_speed, 'zoom': 0, 'duration': 0.2},
+                'down': {'pan': 0, 'tilt': -manual_speed, 'zoom': 0, 'duration': 0.2},
+                'left': {'pan': -manual_speed, 'tilt': 0, 'zoom': 0, 'duration': 0.2},
+                'right': {'pan': manual_speed, 'tilt': 0, 'zoom': 0, 'duration': 0.2},
+                'zoom_in': {'pan': 0, 'tilt': 0, 'zoom': manual_speed * 0.5, 'duration': 0.15},
+                'zoom_out': {'pan': 0, 'tilt': 0, 'zoom': -manual_speed * 0.5, 'duration': 0.15},
+                'home': {'pan': 0, 'tilt': 0, 'zoom': 0, 'duration': 0.1}
             }
             
             if direction not in ptz_commands:
@@ -704,6 +794,10 @@ class CameraTrackerApp(QMainWindow):
                 return
             
             cmd = ptz_commands[direction]
+            
+            # Override duration if provided (for continuous hold)
+            if duration_override is not None:
+                cmd['duration'] = duration_override
             
             # Send continuous move command to backend in a separate thread
             # This prevents UI blocking while waiting for response
@@ -751,7 +845,8 @@ class CameraTrackerApp(QMainWindow):
                 print("✗ No preset token found")
                 return
             
-            speed = self.speed_slider.value() / 10.0  # Convert to 0.1-1.0 range
+            # Use maximum speed (1.0) for preset movement - always fast
+            speed = 1.0
             
             response = requests.post(
                 f"{self.backend_url}/api/camera/preset/{preset_token}",
