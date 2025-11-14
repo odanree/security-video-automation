@@ -343,6 +343,8 @@ def generate_frames():
     """Generate video frames with detection overlays"""
     import time
     frame_count = 0
+    PROCESS_EVERY_N_FRAMES = 2  # Only detect on every 2nd frame (smoother than 3)
+    last_detections = []  # Cache last detections
     
     while True:
         if not stream_handler or stream_handler.stopped:
@@ -358,13 +360,16 @@ def generate_frames():
                 time.sleep(0.1)  # Wait a bit before retrying
                 continue
             
-            # Run detection if detector available
-            if detector:
-                detections = detector.detect(frame)
-                frame = detector.draw_detections(frame, detections)
+            # Run detection only on every Nth frame
+            if detector and frame_count % PROCESS_EVERY_N_FRAMES == 0:
+                last_detections = detector.detect(frame)
             
-            # Encode frame as JPEG
-            ret, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
+            # Draw cached detections on every frame
+            if detector and last_detections:
+                frame = detector.draw_detections(frame, last_detections)
+            
+            # Encode frame as JPEG with balanced quality
+            ret, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
             
             if not ret:
                 logger.warning("Failed to encode frame")
@@ -380,8 +385,8 @@ def generate_frames():
             yield (b'--frame\r\n'
                    b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
             
-            # Small delay to control frame rate
-            time.sleep(0.033)  # ~30 FPS
+            # Minimal delay for smoother video (targeting 20 FPS)
+            time.sleep(0.05)  # ~20 FPS
             
         except Exception as e:
             logger.error(f"Error generating frame: {e}", exc_info=True)
