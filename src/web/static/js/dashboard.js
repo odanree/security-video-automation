@@ -41,8 +41,14 @@ class Dashboard {
         };
         
         this.ws.onmessage = (event) => {
-            const data = JSON.parse(event.data);
-            this.updateStatistics(data);
+            const message = JSON.parse(event.data);
+            
+            // Handle different message types
+            if (message.type === 'statistics') {
+                this.updateStatistics(message.data);
+            } else if (message.type === 'event') {
+                this.addEventLog(message.data);
+            }
         };
         
         this.ws.onerror = (error) => {
@@ -128,15 +134,32 @@ class Dashboard {
     // ========================================================================
     
     updateStatistics(data) {
-        // Update stat cards
-        document.getElementById('stat-detections').textContent = data.total_detections || 0;
-        document.getElementById('stat-tracks').textContent = data.active_tracks || 0;
-        document.getElementById('stat-events').textContent = data.total_events || 0;
-        document.getElementById('stat-fps').textContent = (data.fps || 0).toFixed(1);
+        // Update stat cards - map backend keys to DOM elements
+        document.getElementById('stat-detections').textContent = data.detections || 0;
+        document.getElementById('stat-tracks').textContent = data.tracks || 0;
+        document.getElementById('stat-events').textContent = data.completed_events || 0;
         
-        // Update frame info
-        document.getElementById('frame-count').textContent = data.frame_count || 0;
-        document.getElementById('frame-fps').textContent = (data.fps || 0).toFixed(1);
+        // Display additional stats if available
+        const fpsElement = document.getElementById('stat-fps');
+        if (fpsElement) {
+            fpsElement.textContent = (data.processing_fps || 0).toFixed(1);
+        }
+        
+        // Update frame and processing info
+        const framesReceivedEl = document.getElementById('frames-received');
+        if (framesReceivedEl) {
+            framesReceivedEl.textContent = data.frames_processed || 0;
+        }
+        
+        const activeEventsEl = document.getElementById('stat-active-events');
+        if (activeEventsEl) {
+            activeEventsEl.textContent = data.active_events || 0;
+        }
+        
+        const modeEl = document.getElementById('stat-mode');
+        if (modeEl) {
+            modeEl.textContent = data.current_mode || 'unknown';
+        }
     }
     
     async loadSystemStatus() {

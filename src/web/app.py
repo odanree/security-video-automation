@@ -174,19 +174,25 @@ async def get_statistics() -> Dict[str, Any]:
     """Get tracking statistics"""
     if not tracking_engine:
         return {
+            "frames_processed": 0,
             "detections": 0,
             "tracks": 0,
-            "events": 0,
-            "uptime": 0
+            "ptz_movements": 0,
+            "active_events": 0,
+            "completed_events": 0,
+            "fps": 0
         }
     
     stats = tracking_engine.get_statistics()
     return {
-        "detections": stats.get('total_detections', 0),
-        "tracks": stats.get('active_tracks', 0),
-        "events": len(tracking_engine.get_completed_events()),
-        "uptime": stats.get('uptime_seconds', 0),
-        "fps": stats.get('processing_fps', 0)
+        "frames_processed": stats.get('frames_processed', 0),
+        "detections": stats.get('detections', 0),
+        "tracks": stats.get('tracks', 0),
+        "ptz_movements": stats.get('ptz_movements', 0),
+        "active_events": stats.get('active_events', 0),
+        "completed_events": stats.get('completed_events', 0),
+        "current_mode": stats.get('mode', 'unknown'),
+        "is_running": stats.get('is_running', False)
     }
 
 
