@@ -665,103 +665,51 @@ async def video_stream(detections: bool = False):
 
 
 # ============================================================================
-# WebSocket Binary Stream (Ultra-Low Latency - Direct RTSP)
+# WebSocket Binary Stream (Ultra-Low Latency)
 # ============================================================================
-
-# Direct RTSP capture for minimal latency (bypasses shared queue)
-_direct_rtsp_capture = None
-_direct_rtsp_lock = threading.Lock()
-
-def get_direct_rtsp_stream():
-    """Get or create a direct RTSP capture (low-latency path)"""
-    global _direct_rtsp_capture
-    
-    if _direct_rtsp_capture is None:
-        try:
-            # Get RTSP URL from config or environment
-            import os
-            rtsp_url = os.getenv('RTSP_URL') or 'rtsp://admin:Windows98@192.168.1.107:554/11'
-            
-            if rtsp_url:
-                cap = cv2.VideoCapture(rtsp_url)
-                cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-                cap.set(cv2.CAP_PROP_FPS, 30)
-                
-                if cap.isOpened():
-                    _direct_rtsp_capture = cap
-                else:
-                    logger.warning("Failed to open direct RTSP stream")
-                    cap.release()
-        except Exception as e:
-            logger.error(f"Error creating direct RTSP stream: {e}")
-    
-    return _direct_rtsp_capture
 
 @app.websocket("/ws/video")
 async def websocket_video_stream(websocket: WebSocket):
     """
     WebSocket binary video stream - ULTRA-LOW LATENCY PATH
     
-    Uses DIRECT RTSP capture (bypasses shared queue)
-    Sends raw JPEG frames as binary data over WebSocket
-    Result: 15-20ms latency (matches camera admin interface)
-    
-    Protocol:
-    - 4-byte little-endian frame size
-    - JPEG data
-    - Repeats for each frame
+    Reads from shared stream handler but with minimal buffering
+    Protocol: [4-byte frame size][JPEG data]
     """
     await websocket.accept()
-    cap = get_direct_rtsp_stream()
-    
-    if cap is None:
-        logger.error("Direct RTSP stream not available")
-        await websocket.close()
-        return
     
     try:
+        frame_skip_counter = 0
         while True:
-            # Read directly from camera (bypass queue)
-            ret, frame = cap.read()
-            
-            if not ret:
-                # Reconnect
-                cap.release()
-                cap = None
-                cap = get_direct_rtsp_stream()
-                await asyncio.sleep(0.1)
+            if not stream_handler or stream_handler.stopped:
+                await asyncio.sleep(0.01)
                 continue
             
-            # CRITICAL: Skip stale frames to get latest
-            for _ in range(2):
-                ret2, frame2 = cap.read()
-                if ret2:
-                    frame = frame2
+            # Get latest frame (drain all buffered frames, keep only newest)
+            frame = stream_handler.read_latest()
             
-            # Encode as JPEG (ultra-low quality for speed)
+            if frame is None:
+                await asyncio.sleep(0.001)
+                continue
+            
+            # Encode as JPEG (ultra-low quality)
             ret, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 15])
             
             if not ret:
                 continue
             
             frame_bytes = buffer.tobytes()
-            
-            # Send: [4-byte size][JPEG data]
             frame_size = len(frame_bytes).to_bytes(4, byteorder='little')
             
             try:
                 await websocket.send_bytes(frame_size + frame_bytes)
             except Exception as e:
-                logger.debug(f"WebSocket send error: {e}")
                 break
                 
     except WebSocketDisconnect:
         logger.info("WebSocket video client disconnected")
     except Exception as e:
         logger.error(f"WebSocket video error: {e}")
-    finally:
-        if cap:
-            cap.release()
 
 
 # ============================================================================

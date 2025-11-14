@@ -116,8 +116,8 @@ class Dashboard {
         wsVideo.binaryType = 'arraybuffer';
         
         let firstFrame = false;
-        let frameBuffer = new ArrayBuffer(0);
-        const headerSize = 4; // 4-byte frame size
+        let partialBuffer = new ArrayBuffer(0);
+        const headerSize = 4;
         
         wsVideo.onopen = () => {
             // Stream connected
@@ -125,35 +125,46 @@ class Dashboard {
         
         wsVideo.onmessage = (event) => {
             try {
-                // Append incoming data to buffer
+                // Combine partial buffer with new data
                 const newData = new Uint8Array(event.data);
-                const oldBuffer = new Uint8Array(frameBuffer);
-                frameBuffer = new ArrayBuffer(oldBuffer.length + newData.length);
-                const combined = new Uint8Array(frameBuffer);
-                combined.set(oldBuffer);
-                combined.set(newData, oldBuffer.length);
+                const oldData = new Uint8Array(partialBuffer);
                 
-                // Process complete frames
-                while (frameBuffer.byteLength >= headerSize) {
-                    const view = new DataView(frameBuffer);
-                    const frameSize = view.getUint32(0, true); // Little-endian
+                const combined = new Uint8Array(oldData.length + newData.length);
+                combined.set(oldData, 0);
+                combined.set(newData, oldData.length);
+                
+                let offset = 0;
+                
+                // Process all complete frames in buffer
+                while (offset + headerSize <= combined.length) {
+                    const view = new DataView(combined.buffer, combined.byteOffset + offset, headerSize);
+                    const frameSize = view.getUint32(0, true);
                     
-                    if (frameBuffer.byteLength >= headerSize + frameSize) {
-                        // We have a complete frame
-                        const frameData = frameBuffer.slice(headerSize, headerSize + frameSize);
-                        frameBuffer = frameBuffer.slice(headerSize + frameSize);
-                        
-                        // Decode JPEG and display
-                        this.displayFrameFromJPEG(canvas, ctx, frameData);
-                        
-                        if (!firstFrame) {
-                            overlay.classList.add('hidden');
-                            firstFrame = true;
-                        }
-                    } else {
-                        break; // Wait for more data
+                    if (offset + headerSize + frameSize > combined.length) {
+                        // Incomplete frame, keep in buffer
+                        break;
+                    }
+                    
+                    // Extract frame data
+                    const frameData = combined.slice(offset + headerSize, offset + headerSize + frameSize);
+                    offset += headerSize + frameSize;
+                    
+                    // Display frame
+                    this.displayFrameFromJPEG(canvas, ctx, frameData);
+                    
+                    if (!firstFrame) {
+                        overlay.classList.add('hidden');
+                        firstFrame = true;
                     }
                 }
+                
+                // Keep remaining data for next message
+                if (offset < combined.length) {
+                    partialBuffer = combined.slice(offset).buffer;
+                } else {
+                    partialBuffer = new ArrayBuffer(0);
+                }
+                
             } catch (e) {
                 console.error('Frame processing error:', e);
             }
@@ -165,36 +176,38 @@ class Dashboard {
         
         wsVideo.onclose = () => {
             // Attempt reconnect after delay
-            setTimeout(() => this.setupWebSocketVideoStream(), 2000);
+            setTimeout(() => this.setupWebSocketVideoStream(), 1000);
         };
     }
     
     displayFrameFromJPEG(canvas, ctx, jpegData) {
-        // Convert JPEG binary data to blob and decode
-        const blob = new Blob([jpegData], { type: 'image/jpeg' });
-        const url = URL.createObjectURL(blob);
-        
-        const img = new Image();
-        img.onload = () => {
-            // Set canvas size to match image (only on first frame or size change)
-            if (canvas.width !== img.width || canvas.height !== img.height) {
-                canvas.width = img.width;
-                canvas.height = img.height;
-            }
+        try {
+            // Convert binary JPEG data to blob
+            const blob = new Blob([jpegData], { type: 'image/jpeg' });
+            const url = URL.createObjectURL(blob);
             
-            // Draw image to canvas
-            ctx.drawImage(img, 0, 0);
+            const img = new Image();
             
-            // Clean up blob URL
-            URL.revokeObjectURL(url);
-        };
-        
-        img.onerror = () => {
-            URL.revokeObjectURL(url);
-            console.warn('Failed to decode frame');
-        };
-        
-        img.src = url;
+            img.onload = () => {
+                // Set canvas size to match image
+                if (canvas.width !== img.width || canvas.height !== img.height) {
+                    canvas.width = img.width;
+                    canvas.height = img.height;
+                }
+                
+                // Draw image to canvas
+                ctx.drawImage(img, 0, 0);
+                URL.revokeObjectURL(url);
+            };
+            
+            img.onerror = () => {
+                URL.revokeObjectURL(url);
+            };
+            
+            img.src = url;
+        } catch (e) {
+            console.error('JPEG decode error:', e);
+        }
     }
     
     toggleFullscreen() {
