@@ -391,13 +391,15 @@ async def get_events(limit: int = 50) -> List[Dict[str, Any]]:
 # Video Streaming
 # ============================================================================
 
-def generate_frames():
-    """Generate video frames with minimal latency - streaming only, no detection overlays"""
+def generate_frames(show_detections=False):
+    """Generate video frames - optionally with detection overlays"""
     import time
     frame_count = 0
+    last_detections = []
     last_frame_time = time.time()
-    TARGET_FPS = 30  # 30 FPS for smooth video
-    JPEG_QUALITY = 70  # Lower quality = faster encoding and lower bandwidth
+    TARGET_FPS = 15 if show_detections else 30  # Lower FPS if processing
+    JPEG_QUALITY = 70
+    PROCESS_EVERY_N_FRAMES = 2 if show_detections else 1
     
     while True:
         if not stream_handler or stream_handler.stopped:
@@ -405,18 +407,21 @@ def generate_frames():
             break
         
         try:
-            # Get frame from stream (non-blocking)
             frame = stream_handler.read()
             
             if frame is None:
-                # Minimal wait - quickly retry
-                time.sleep(0.0001)  # 0.1ms instead of 1ms
+                time.sleep(0.0001)
                 continue
             
-            # Skip detection overlays for now - they add latency
-            # Detection happens in tracking_engine separately
+            # Run detection if overlays are enabled
+            if show_detections and detector and frame_count % PROCESS_EVERY_N_FRAMES == 0:
+                last_detections = detector.detect(frame)
             
-            # Encode frame as JPEG with very low quality for maximum speed
+            # Draw cached detections if overlays are enabled
+            if show_detections and detector and last_detections:
+                frame = detector.draw_detections(frame, last_detections)
+            
+            # Encode frame as JPEG
             ret, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY])
             
             if not ret:
@@ -430,7 +435,7 @@ def generate_frames():
             yield (b'--frame\r\n'
                    b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
             
-            # Adaptive frame rate - only sleep if we're ahead of schedule
+            # Adaptive frame rate
             elapsed = time.time() - last_frame_time
             target_delay = 1.0 / TARGET_FPS
             if elapsed < target_delay:
@@ -443,10 +448,10 @@ def generate_frames():
 
 
 @app.get("/api/video/stream")
-async def video_stream():
-    """Live MJPEG video stream with detection overlays"""
+async def video_stream(detections: bool = False):
+    """Live MJPEG video stream - optionally with detection overlays"""
     return StreamingResponse(
-        generate_frames(),
+        generate_frames(show_detections=detections),
         media_type="multipart/x-mixed-replace; boundary=frame"
     )
 

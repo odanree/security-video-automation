@@ -532,6 +532,7 @@ class Dashboard {
         document.getElementById('btn-stop-tracking')?.addEventListener('click', () => this.stopTracking());
         
         // Video controls - correct IDs
+        document.getElementById('btn-toggle-detections')?.addEventListener('click', () => this.toggleDetections());
         document.getElementById('btn-fullscreen')?.addEventListener('click', () => this.toggleFullscreen());
         
         // PTZ dpad controls - use mousedown for instant response
@@ -578,6 +579,30 @@ class Dashboard {
         
         // Initialize speed display
         this.updateSpeedDisplay();
+    }
+    
+    // ========================================================================
+    // Video Stream Controls
+    // ========================================================================
+    
+    toggleDetections() {
+        const videoImg = document.getElementById('video-stream');
+        const btn = document.getElementById('btn-toggle-detections');
+        
+        if (!videoImg) return;
+        
+        // Toggle between normal and detection stream
+        if (videoImg.src.includes('stream-detection')) {
+            // Switch back to normal stream
+            videoImg.src = '/api/video/stream';
+            btn.style.opacity = '0.5';
+            console.log('Switched to fast stream (no detection overlays)');
+        } else {
+            // Switch to detection stream
+            videoImg.src = '/api/video/stream-detection';
+            btn.style.opacity = '1.0';
+            console.log('Switched to detection stream (with overlays)');
+        }
     }
     
     // ========================================================================
