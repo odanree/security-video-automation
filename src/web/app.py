@@ -68,6 +68,20 @@ ptz_controller: Optional[PTZController] = None
 # WebSocket connections for live updates
 active_connections: List[WebSocket] = []
 
+# Cache last known stats to show persistent values when tracking stops
+last_known_stats: Dict[str, Any] = {
+    'frames_processed': 0,
+    'detections': 0,
+    'tracks': 0,
+    'ptz_movements': 0,
+    'active_events': 0,
+    'completed_events': 0,
+    'current_preset': None,
+    'is_running': False,
+    'is_paused': False,
+    'mode': 'offline'
+}
+
 
 @app.on_event("startup")
 async def startup_event():
@@ -199,6 +213,7 @@ async def get_status() -> Dict[str, Any]:
 @app.get("/api/statistics")
 async def get_statistics() -> Dict[str, Any]:
     """Get tracking statistics with stream health info"""
+    global last_known_stats
     
     # Base stats structure
     base_stats = {
@@ -229,20 +244,20 @@ async def get_statistics() -> Dict[str, Any]:
                 "current_mode": stats.get('mode', 'tracking'),
                 "is_running": True
             })
+            # Cache these stats for when tracking stops
+            last_known_stats = base_stats.copy()
         except Exception as e:
             logger.error(f"Error getting tracking engine stats: {e}")
     else:
-        # Tracking not running - use stream handler stats
-        base_stats["current_mode"] = "streaming"
+        # Tracking not running - use CACHED stats (persistent across stop/start)
+        base_stats.update(last_known_stats)
+        base_stats["is_running"] = False  # But mark tracking as stopped
+        logger.debug(f"Using cached stats: detections={base_stats.get('detections')}, tracks={base_stats.get('tracks')}")
     
     # Always add stream health info from stream handler (source stream FPS)
     if stream_handler:
         try:
             stream_stats = stream_handler.get_stats()
-            
-            # If tracking is not running, use stream frame count
-            if not (tracking_engine and tracking_engine.running):
-                base_stats["frames_processed"] = stream_stats.frames_received
             
             # Update stream stats - always use these for stream health
             base_stats.update({
@@ -701,13 +716,16 @@ async def websocket_video_stream(websocket: WebSocket):
 @app.websocket("/ws/updates")
 async def websocket_endpoint(websocket: WebSocket):
     """WebSocket for pushing real-time statistics and events"""
+    global last_known_stats
+    
     await websocket.accept()
     active_connections.append(websocket)
     
     try:
         while True:
             # Send statistics every second
-            if tracking_engine:
+            if tracking_engine is not None and tracking_engine.running:
+                # ✅ Tracking engine is active - get live stats and cache them
                 stats = tracking_engine.get_statistics()
                 
                 # Always add stream handler stats for FPS and connection info
@@ -722,54 +740,44 @@ async def websocket_endpoint(websocket: WebSocket):
                         stats['fps'] = 0
                         stats['frames_dropped'] = 0
                         stats['stream_connected'] = False
-                        
-            elif stream_handler:
-                # Use stream handler stats as fallback
+                
+                # Get latest detections from tracking engine
                 try:
-                    stream_stats = stream_handler.get_stats()
-                    stats = {
-                        'frames_processed': stream_stats.frames_received,
-                        'detections': 0,
-                        'tracks': 0,
-                        'ptz_movements': 0,
-                        'active_events': 0,
-                        'completed_events': 0,
-                        'current_preset': None,
-                        'is_running': not stream_handler.stopped,
-                        'is_paused': False,
-                        'mode': 'streaming',
-                        'fps': stream_stats.fps if stream_stats.is_connected else 0,
-                        'frames_dropped': stream_stats.frames_dropped,
-                        'stream_connected': stream_stats.is_connected
-                    }
+                    if hasattr(tracking_engine, 'last_detections') and tracking_engine.last_detections:
+                        detection_list = []
+                        for d in tracking_engine.last_detections:
+                            detection_list.append({
+                                'class_name': d.class_name,
+                                'confidence': float(d.confidence),
+                                'bbox': list(d.bbox) if hasattr(d.bbox, '__iter__') else d.bbox
+                            })
+                        stats['detections_data'] = detection_list
                 except Exception as e:
-                    logger.error(f"Error getting stream stats in WebSocket: {e}")
-                    stats = {
-                        'frames_processed': 0,
-                        'detections': 0,
-                        'tracks': 0,
-                        'ptz_movements': 0,
-                        'active_events': 0,
-                        'completed_events': 0,
-                        'current_preset': None,
-                        'is_running': False,
-                        'is_paused': False,
-                        'mode': 'offline'
-                    }
+                    logger.debug(f"Error getting detections for WebSocket: {e}")
+                
+                # 💾 Cache these stats for when tracking stops
+                last_known_stats = stats.copy()
+                logger.debug(f"Cached stats: frames={stats.get('frames_processed')}, detections={stats.get('detections')}, tracks={stats.get('tracks')}")
+                
             else:
-                # Send default stats if neither available
-                stats = {
-                    'frames_processed': 0,
-                    'detections': 0,
-                    'tracks': 0,
-                    'ptz_movements': 0,
-                    'active_events': 0,
-                    'completed_events': 0,
-                    'current_preset': None,
-                    'is_running': False,
-                    'is_paused': False,
-                    'mode': 'idle'
-                }
+                # ❌ Tracking engine is stopped - use cached stats (NOT zeros!)
+                stats = last_known_stats.copy()
+                logger.warning(f"Tracking stopped! Using cached stats: frames={stats.get('frames_processed')}, detections={stats.get('detections')}, tracks={stats.get('tracks')}")
+                
+                # Keep FPS and connection info up-to-date even when tracking is stopped
+                if stream_handler:
+                    try:
+                        stream_stats = stream_handler.get_stats()
+                        stats['fps'] = stream_stats.fps if stream_stats.is_connected else 0
+                        stats['frames_dropped'] = stream_stats.frames_dropped
+                        stats['stream_connected'] = stream_stats.is_connected
+                    except Exception as e:
+                        stats['fps'] = 0
+                        stats['frames_dropped'] = 0
+                        stats['stream_connected'] = False
+                
+                # Mark that tracking is not running
+                stats['is_running'] = False
             
             await websocket.send_json({
                 "type": "statistics",

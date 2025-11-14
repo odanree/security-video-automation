@@ -116,11 +116,11 @@ tracking:
     # Enable PTZ control
     enable_ptz: true
     
-    # Movement speed (0.0 to 1.0)
-    movement_speed: 0.7
+    # Movement speed (0.0 to 1.0) - increased to max for fast objects
+    movement_speed: 1.0
     
-    # Cooldown between movements (seconds)
-    cooldown_time: 3.0
+    # Cooldown between movements (seconds) - reduced for faster response to moving cars
+    cooldown_time: 0.2
     
     # Anticipatory tracking: move camera before object reaches edge
     anticipatory_tracking: true
@@ -129,10 +129,10 @@ tracking:
     # Return to home position after inactivity
     auto_return_home: true
     home_preset: "Preset004"  # home position
-    inactivity_timeout: 60  # seconds
+    inactivity_timeout: 25  # seconds
     
-    # Maximum PTZ movements per minute (rate limiting)
-    max_movements_per_minute: 20
+    # Maximum PTZ movements per minute (rate limiting) - increased for fast tracking
+    max_movements_per_minute: 300
   
   # Filters and exclusions
   filters:

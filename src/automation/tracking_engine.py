@@ -183,6 +183,11 @@ class TrackingEngine:
         self.tracking_count = 0
         self.ptz_movement_count = 0
         
+        # Cache recent detections for web overlay (no latency)
+        self.last_detections = []
+        self.overlay_detection_frame_skip = 0  # Counter for detection sampling
+        self.overlay_detection_interval = 5  # Run detection every N frames (for web overlay only)
+        
         # Callbacks
         self.on_detection: Optional[Callable] = None
         self.on_tracking: Optional[Callable] = None
@@ -341,8 +346,36 @@ class TrackingEngine:
         """
         current_time = time.time()
         
-        # Step 1: Detect objects
-        detections = self.detector.detect(frame, frame_number=self.frame_count)
+        # ⭐ OPTIMIZATION: Downsample frame for detection to save CPU
+        # Detection is CPU-intensive, so we scale down the frame
+        # Tracking coordinates are scaled back up automatically
+        frame_height, frame_width = frame.shape[:2]
+        
+        # Scale factor: if frame is > 1280px wide, downsample
+        if frame_width > 1280:
+            scale_factor = 1280 / frame_width
+            detection_frame = cv2.resize(frame, (int(frame_width * scale_factor), int(frame_height * scale_factor)), interpolation=cv2.INTER_LINEAR)
+        else:
+            scale_factor = 1.0
+            detection_frame = frame
+        
+        # Step 1: Detect objects (on downsampled frame for speed)
+        detections = self.detector.detect(detection_frame, frame_number=self.frame_count)
+        
+        # ⭐ Scale detection bboxes back to original frame coordinates
+        if scale_factor != 1.0:
+            for detection in detections:
+                # bbox: (x1, y1, x2, y2)
+                x1, y1, x2, y2 = detection.bbox
+                detection.bbox = (
+                    int(x1 / scale_factor),
+                    int(y1 / scale_factor),
+                    int(x2 / scale_factor),
+                    int(y2 / scale_factor)
+                )
+                # Also scale center
+                cx, cy = detection.center
+                detection.center = (int(cx / scale_factor), int(cy / scale_factor))
         
         # Filter by target classes and confidence
         detections = [
@@ -350,6 +383,10 @@ class TrackingEngine:
             if d.class_name in self.config.target_classes
             and d.confidence >= self.config.min_confidence
         ]
+        
+        # ⭐ Cache detections for web overlay (they're computed anyway for tracking)
+        # No extra CPU cost - just storing the reference to already-detected objects
+        self.last_detections = detections
         
         self.detection_count += len(detections)
         
@@ -411,6 +448,11 @@ class TrackingEngine:
             # Only go home if not already there
             if self.current_preset != self.home_preset:
                 try:
+                    # ⭐ DIAGNOSTIC LOG: Home return being triggered
+                    print(f"⭐ [HOME RETURN] Inactivity timeout ({time_since_last_move:.1f}s >= {self.inactivity_timeout}s)")
+                    print(f"⭐ [HOME RETURN] Moving to home preset: {self.home_preset}")
+                    logger.warning(f"⭐ [HOME RETURN] Inactivity timeout - Moving to home preset {self.home_preset}")
+                    
                     logger.info(
                         f"No movement for {time_since_last_move:.1f}s - "
                         f"Returning to home preset {self.home_preset}"
@@ -537,6 +579,14 @@ class TrackingEngine:
             f"X offset={offset_pixels_x:+.0f}px → pan={pan_velocity:+.2f} ({pan_state}) | "
             f"Y offset={offset_pixels_y:+.0f}px → tilt={tilt_velocity:+.2f} ({tilt_state})"
         )
+        
+        # ⭐ DIAGNOSTIC LOG: Show what we're about to send
+        print(f"⭐ [TRACKING ENGINE] About to send continuous_move command:")
+        print(f"   Subject: {detection.class_name} at ({subject_x:.0f}, {subject_y:.0f})")
+        print(f"   Frame center: ({frame_center_x:.0f}, {frame_center_y:.0f})")
+        print(f"   Offset: X={offset_pixels_x:+.0f}px, Y={offset_pixels_y:+.0f}px")
+        print(f"   Velocity: pan={pan_velocity:+.2f}, tilt={tilt_velocity:+.2f}")
+        logger.warning(f"⭐ [TRACKING ENGINE] Velocity command: pan={pan_velocity:+.2f}, tilt={tilt_velocity:+.2f}")
         
         try:
             # Execute continuous pan/tilt movement (non-blocking, shorter duration for faster updates)
