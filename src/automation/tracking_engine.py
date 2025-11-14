@@ -463,7 +463,7 @@ class TrackingEngine:
         """
         Execute tracking action - Center-of-frame continuous tracking
         
-        Uses subject's position in frame to calculate proportional pan velocity,
+        Uses subject's position in frame to calculate proportional pan/tilt velocity,
         keeping the subject centered (or close to center) automatically.
         
         Args:
@@ -474,52 +474,79 @@ class TrackingEngine:
         """
         height, width = frame.shape[:2]
         frame_center_x = width / 2.0
+        frame_center_y = height / 2.0
         subject_x = detection.center[0]
+        subject_y = detection.center[1]
         
+        # ========== PAN (Horizontal X-axis) ==========
         # Calculate offset from center (negative = left of center, positive = right)
-        offset_pixels = subject_x - frame_center_x
+        offset_pixels_x = subject_x - frame_center_x
         
         # Calculate normalized offset (-1.0 to 1.0, where 0 = centered)
-        max_offset = width / 2.0
-        normalized_offset = offset_pixels / max_offset
+        max_offset_x = width / 2.0
+        normalized_offset_x = offset_pixels_x / max_offset_x
         
         # Dead zone: if subject is close to center, don't pan
-        # This prevents jitter and unnecessary movement
-        DEAD_ZONE_PIXELS = 80  # If within 80 pixels of center, stop panning
-        if abs(offset_pixels) < DEAD_ZONE_PIXELS:
+        DEAD_ZONE_PIXELS_X = 80  # If within 80 pixels of center, stop panning
+        if abs(offset_pixels_x) < DEAD_ZONE_PIXELS_X:
             pan_velocity = 0.0
-            tracking_state = "CENTERED"
+            pan_state = "CENTERED_X"
         else:
-            # Convert normalized offset to pan velocity (-0.7 to 0.7)
-            # Use non-linear mapping: small offsets get smaller velocities
-            # This creates smooth, responsive tracking without aggressive jerking
             max_pan_velocity = 0.7
             
             # Exponential smoothing for more natural tracking
-            # Closer to center = slower pan, far from center = faster pan
-            if abs(normalized_offset) < 0.3:
+            if abs(normalized_offset_x) < 0.3:
                 # Quadratic for smooth acceleration near center
-                pan_velocity = max_pan_velocity * (normalized_offset ** 2) * (1 if normalized_offset > 0 else -1)
+                pan_velocity = max_pan_velocity * (normalized_offset_x ** 2) * (1 if normalized_offset_x > 0 else -1)
             else:
                 # Linear for consistent tracking at edges
-                pan_velocity = max_pan_velocity * normalized_offset
+                pan_velocity = max_pan_velocity * normalized_offset_x
             
             # Clamp to valid range
             pan_velocity = max(-0.7, min(0.7, pan_velocity))
-            tracking_state = "TRACKING"
+            pan_state = "TRACKING_X"
+        
+        # ========== TILT (Vertical Y-axis) ==========
+        # Calculate offset from center (negative = above center, positive = below)
+        offset_pixels_y = subject_y - frame_center_y
+        
+        # Calculate normalized offset (-1.0 to 1.0, where 0 = centered)
+        max_offset_y = height / 2.0
+        normalized_offset_y = offset_pixels_y / max_offset_y
+        
+        # Dead zone: if subject is close to center, don't tilt
+        DEAD_ZONE_PIXELS_Y = 80
+        if abs(offset_pixels_y) < DEAD_ZONE_PIXELS_Y:
+            tilt_velocity = 0.0
+            tilt_state = "CENTERED_Y"
+        else:
+            max_tilt_velocity = 0.7
+            
+            # Exponential smoothing for more natural tracking
+            if abs(normalized_offset_y) < 0.3:
+                # Quadratic for smooth acceleration near center
+                tilt_velocity = max_tilt_velocity * (normalized_offset_y ** 2) * (1 if normalized_offset_y > 0 else -1)
+            else:
+                # Linear for consistent tracking at edges
+                tilt_velocity = max_tilt_velocity * normalized_offset_y
+            
+            # Clamp to valid range
+            tilt_velocity = max(-0.7, min(0.7, tilt_velocity))
+            tilt_state = "TRACKING_Y"
         
         # Log tracking state
         logger.info(
-            f"{detection.class_name} center tracking: offset={offset_pixels:+.0f}px "
-            f"(norm={normalized_offset:+.2f}) → pan_velocity={pan_velocity:+.2f} ({tracking_state})"
+            f"{detection.class_name} center tracking: "
+            f"X offset={offset_pixels_x:+.0f}px → pan={pan_velocity:+.2f} ({pan_state}) | "
+            f"Y offset={offset_pixels_y:+.0f}px → tilt={tilt_velocity:+.2f} ({tilt_state})"
         )
         
         try:
-            # Execute continuous pan movement (non-blocking, short duration)
-            # This creates smooth, centered tracking
+            # Execute continuous pan/tilt movement (non-blocking, short duration)
+            # This creates smooth, centered tracking in both axes
             self.ptz.continuous_move(
                 pan_velocity=pan_velocity,
-                tilt_velocity=0.0,
+                tilt_velocity=tilt_velocity,
                 zoom_velocity=0.0,
                 duration=0.3,  # Short duration for responsive tracking
                 blocking=False  # Non-blocking so we process next frame immediately
@@ -529,15 +556,24 @@ class TrackingEngine:
             self.ptz_movement_count += 1
             
             # Describe current state for display
-            if pan_velocity > 0:
-                direction_display = "PAN_RIGHT"
-            elif pan_velocity < 0:
-                direction_display = "PAN_LEFT"
+            state_parts = []
+            if pan_velocity > 0.1:
+                state_parts.append("PAN_RIGHT")
+            elif pan_velocity < -0.1:
+                state_parts.append("PAN_LEFT")
             else:
-                direction_display = "CENTERED"
+                state_parts.append("CENTER_X")
             
-            self.current_preset = f"{direction_display}_{tracking_state}"
+            if tilt_velocity > 0.1:
+                state_parts.append("TILT_DOWN")
+            elif tilt_velocity < -0.1:
+                state_parts.append("TILT_UP")
+            else:
+                state_parts.append("CENTER_Y")
             
+            self.current_preset = "|".join(state_parts)
+            
+
             if self.on_ptz_move:
                 self.on_ptz_move(self.current_preset)
             
