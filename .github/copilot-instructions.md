@@ -1282,11 +1282,29 @@ taskkill /F /IM python.exe; python start_dashboard.py
 ### Branch Strategy
 **NEVER commit directly to `main`**. Always use feature branches and Pull Requests.
 
+**Batch Multiple Improvements Strategy:**
+- Create a feature branch for related improvements (e.g., `feature/tracking-optimization`)
+- Make multiple local commits as you work on different aspects of the feature
+- Build up several commits locally before pushing
+- When ready, push all commits together to the remote branch
+- Create ONE comprehensive PR that includes all the improvements
+- This results in cleaner PR history and more logical grouping of related changes
+
 ```bash
 # Create feature branch
 git checkout -b feature/camera-discovery
 git checkout -b feature/ai-detection
 git checkout -b fix/stream-timeout
+
+# Make multiple commits locally as you work
+git commit -m "perf(camera): improve discovery speed"
+git commit -m "fix(camera): handle timeout errors"
+git commit -m "perf(camera): add caching"
+
+# When satisfied with all changes, push everything together
+git push -u origin feature/camera-discovery
+
+# Then create ONE PR that includes all commits
 ```
 
 ### Conventional Commits (REQUIRED)
