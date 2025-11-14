@@ -642,14 +642,15 @@ class TrackingEngine:
         logger.warning(f"⭐ [TRACKING ENGINE] Velocity command: pan={pan_velocity:+.2f}, tilt={tilt_velocity:+.2f}")
         
         try:
-            # Execute continuous pan/tilt movement (non-blocking, shorter duration for faster updates)
-            # Reduced from 0.3s to 0.15s for more responsive centering
+            # Execute continuous pan/tilt movement (blocking with SHORT duration)
+            # CRITICAL: Must use blocking=True, otherwise camera never stops moving!
+            # We use very short duration (0.1s) so it returns quickly for next frame
             self.ptz.continuous_move(
                 pan_velocity=pan_velocity,
                 tilt_velocity=tilt_velocity,
                 zoom_velocity=0.0,
-                duration=0.15,  # Faster updates = faster centering
-                blocking=False  # Non-blocking so we process next frame immediately
+                duration=0.1,  # Short duration for responsive updates
+                blocking=True  # CRITICAL: Automatically stops after duration
             )
             
             self.last_ptz_time = time.time()

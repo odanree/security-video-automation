@@ -555,6 +555,24 @@ async def get_tracking_status() -> Dict[str, Any]:
     }
 
 
+@app.get("/api/detections/current")
+async def get_current_detections() -> List[Dict[str, Any]]:
+    """Get current frame detections for overlay display"""
+    if not tracking_engine or not hasattr(tracking_engine, 'last_detections'):
+        return []
+    
+    # Return latest detections in format expected by desktop app
+    detections = []
+    for det in tracking_engine.last_detections:
+        detections.append({
+            "bbox": det.bbox,  # (x1, y1, x2, y2)
+            "class": det.class_name,
+            "confidence": det.confidence
+        })
+    
+    return detections
+
+
 @app.get("/api/events")
 async def get_events(limit: int = 50) -> List[Dict[str, Any]]:
     """Get recent tracking events"""
