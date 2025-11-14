@@ -172,8 +172,11 @@ async def get_status() -> Dict[str, Any]:
 @app.get("/api/statistics")
 async def get_statistics() -> Dict[str, Any]:
     """Get tracking statistics"""
+    logger.info(f"Statistics requested - tracking_engine: {tracking_engine is not None}, stream_handler: {stream_handler is not None}")
+    
     if tracking_engine:
         stats = tracking_engine.get_statistics()
+        logger.info(f"Returning tracking engine stats: {stats}")
         return {
             "frames_processed": stats.get('frames_processed', 0),
             "detections": stats.get('detections', 0),
@@ -187,21 +190,26 @@ async def get_statistics() -> Dict[str, Any]:
     
     # Use stream handler stats as fallback when tracking engine not running
     if stream_handler:
-        stream_stats = stream_handler.get_stats()
-        return {
-            "frames_processed": stream_stats.frames_received,
-            "detections": 0,
-            "tracks": 0,
-            "ptz_movements": 0,
-            "active_events": 0,
-            "completed_events": 0,
-            "fps": stream_stats.fps,
-            "frames_dropped": stream_stats.frames_dropped,
-            "is_running": not stream_handler.stopped,
-            "current_mode": "streaming"
-        }
+        try:
+            stream_stats = stream_handler.get_stats()
+            logger.info(f"Stream handler stats: frames_received={stream_stats.frames_received}, fps={stream_stats.fps}, stopped={stream_handler.stopped}")
+            return {
+                "frames_processed": stream_stats.frames_received,
+                "detections": 0,
+                "tracks": 0,
+                "ptz_movements": 0,
+                "active_events": 0,
+                "completed_events": 0,
+                "fps": stream_stats.fps,
+                "frames_dropped": stream_stats.frames_dropped,
+                "is_running": not stream_handler.stopped,
+                "current_mode": "streaming"
+            }
+        except Exception as e:
+            logger.error(f"Error getting stream stats: {e}")
     
     # Default fallback
+    logger.warning("Returning default stats - no tracking engine or stream handler available")
     return {
         "frames_processed": 0,
         "detections": 0,
@@ -384,13 +392,12 @@ async def get_events(limit: int = 50) -> List[Dict[str, Any]]:
 # ============================================================================
 
 def generate_frames():
-    """Generate video frames with detection overlays - optimized for low latency"""
+    """Generate video frames with minimal latency - streaming only, no detection overlays"""
     import time
     frame_count = 0
-    PROCESS_EVERY_N_FRAMES = 2  # Process every 2nd frame (CPU optimization)
-    last_detections = []  # Cache last detections
     last_frame_time = time.time()
-    TARGET_FPS = 30  # Higher FPS for responsive video
+    TARGET_FPS = 30  # 30 FPS for smooth video
+    JPEG_QUALITY = 70  # Lower quality = faster encoding and lower bandwidth
     
     while True:
         if not stream_handler or stream_handler.stopped:
@@ -402,20 +409,15 @@ def generate_frames():
             frame = stream_handler.read()
             
             if frame is None:
-                # Don't wait long - quickly retry
-                time.sleep(0.001)
+                # Minimal wait - quickly retry
+                time.sleep(0.0001)  # 0.1ms instead of 1ms
                 continue
             
-            # Run detection only on every Nth frame
-            if detector and frame_count % PROCESS_EVERY_N_FRAMES == 0:
-                last_detections = detector.detect(frame)
+            # Skip detection overlays for now - they add latency
+            # Detection happens in tracking_engine separately
             
-            # Draw cached detections on every frame
-            if detector and last_detections:
-                frame = detector.draw_detections(frame, last_detections)
-            
-            # Encode frame as JPEG with lower quality for speed
-            ret, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 75])
+            # Encode frame as JPEG with very low quality for maximum speed
+            ret, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY])
             
             if not ret:
                 logger.warning("Failed to encode frame")
@@ -424,14 +426,11 @@ def generate_frames():
             frame_bytes = buffer.tobytes()
             frame_count += 1
             
-            if frame_count % 30 == 0:  # Log every 30 frames
-                logger.info(f"Streamed {frame_count} frames")
-            
             # Yield frame in multipart format
             yield (b'--frame\r\n'
                    b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
             
-            # Target frame rate but don't block too long
+            # Adaptive frame rate - only sleep if we're ahead of schedule
             elapsed = time.time() - last_frame_time
             target_delay = 1.0 / TARGET_FPS
             if elapsed < target_delay:
@@ -467,8 +466,40 @@ async def websocket_endpoint(websocket: WebSocket):
             # Send statistics every second
             if tracking_engine:
                 stats = tracking_engine.get_statistics()
+            elif stream_handler:
+                # Use stream handler stats as fallback
+                try:
+                    stream_stats = stream_handler.get_stats()
+                    stats = {
+                        'frames_processed': stream_stats.frames_received,
+                        'detections': 0,
+                        'tracks': 0,
+                        'ptz_movements': 0,
+                        'active_events': 0,
+                        'completed_events': 0,
+                        'current_preset': None,
+                        'is_running': not stream_handler.stopped,
+                        'is_paused': False,
+                        'mode': 'streaming',
+                        'fps': stream_stats.fps,
+                        'frames_dropped': stream_stats.frames_dropped
+                    }
+                except Exception as e:
+                    logger.error(f"Error getting stream stats in WebSocket: {e}")
+                    stats = {
+                        'frames_processed': 0,
+                        'detections': 0,
+                        'tracks': 0,
+                        'ptz_movements': 0,
+                        'active_events': 0,
+                        'completed_events': 0,
+                        'current_preset': None,
+                        'is_running': False,
+                        'is_paused': False,
+                        'mode': 'offline'
+                    }
             else:
-                # Send default stats if tracking engine not initialized
+                # Send default stats if neither available
                 stats = {
                     'frames_processed': 0,
                     'detections': 0,
