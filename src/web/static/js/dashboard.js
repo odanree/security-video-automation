@@ -186,15 +186,24 @@ class Dashboard {
             const response = await fetch('/api/status');
             const data = await response.json();
             
-            // Update system info with null checks
-            const cameraStatusEl = document.getElementById('camera-status');
-            if (cameraStatusEl) cameraStatusEl.textContent = data.camera_connected ? '✓ Connected' : '✗ Disconnected';
+            // Update system info with null checks - match HTML element IDs
+            const streamStatusEl = document.getElementById('status-stream');
+            if (streamStatusEl) {
+                streamStatusEl.textContent = data.camera_connected ? '✓ Connected' : '✗ Disconnected';
+                streamStatusEl.className = data.camera_connected ? 'badge badge-active' : 'badge badge-inactive';
+            }
             
-            const aiStatusEl = document.getElementById('ai-status');
-            if (aiStatusEl) aiStatusEl.textContent = data.ai_model_loaded ? '✓ Loaded' : '✗ Not Loaded';
+            const detectorStatusEl = document.getElementById('status-detector');
+            if (detectorStatusEl) {
+                detectorStatusEl.textContent = data.ai_model_loaded ? '✓ Loaded' : '✗ Not Loaded';
+                detectorStatusEl.className = data.ai_model_loaded ? 'badge badge-active' : 'badge badge-inactive';
+            }
             
-            const ptzStatusEl = document.getElementById('ptz-status');
-            if (ptzStatusEl) ptzStatusEl.textContent = data.ptz_enabled ? '✓ Enabled' : '✗ Disabled';
+            const ptzStatusEl = document.getElementById('status-ptz');
+            if (ptzStatusEl) {
+                ptzStatusEl.textContent = data.ptz_enabled ? '✓ Enabled' : '✗ Disabled';
+                ptzStatusEl.className = data.ptz_enabled ? 'badge badge-active' : 'badge badge-inactive';
+            }
             
             // Update tracking status
             this.isTracking = data.tracking_active;
@@ -246,20 +255,22 @@ class Dashboard {
     }
     
     updateTrackingUI() {
-        const startBtn = document.getElementById('start-tracking-btn');
-        const stopBtn = document.getElementById('stop-tracking-btn');
+        const startBtn = document.getElementById('btn-start-tracking');
+        const stopBtn = document.getElementById('btn-stop-tracking');
         const statusBadge = document.getElementById('tracking-status');
         
-        if (this.isTracking) {
-            startBtn.disabled = true;
-            stopBtn.disabled = false;
-            statusBadge.className = 'badge badge-active';
-            statusBadge.textContent = 'Active';
-        } else {
-            startBtn.disabled = false;
-            stopBtn.disabled = true;
-            statusBadge.className = 'badge badge-inactive';
-            statusBadge.textContent = 'Inactive';
+        if (startBtn && stopBtn && statusBadge) {
+            if (this.isTracking) {
+                startBtn.disabled = true;
+                stopBtn.disabled = false;
+                statusBadge.className = 'badge badge-active';
+                statusBadge.textContent = 'Active';
+            } else {
+                startBtn.disabled = false;
+                stopBtn.disabled = true;
+                statusBadge.className = 'badge badge-inactive';
+                statusBadge.textContent = 'Inactive';
+            }
         }
     }
     
@@ -273,7 +284,17 @@ class Dashboard {
             const data = await response.json();
             
             const select = document.getElementById('preset-select');
+            if (!select) {
+                console.warn('preset-select element not found');
+                return;
+            }
+            
             select.innerHTML = '<option value="">Select Preset...</option>';
+            
+            if (!Array.isArray(data.presets)) {
+                console.warn('No presets returned from API');
+                return;
+            }
             
             data.presets.forEach(preset => {
                 const option = document.createElement('option');
@@ -289,8 +310,12 @@ class Dashboard {
     
     async gotoPreset() {
         const select = document.getElementById('preset-select');
-        const presetToken = select.value;
+        if (!select) {
+            console.warn('preset-select element not found');
+            return;
+        }
         
+        const presetToken = select.value;
         if (!presetToken) return;
         
         try {
@@ -310,7 +335,7 @@ class Dashboard {
     
     async movePTZ(direction) {
         const speedSlider = document.getElementById('ptz-speed');
-        const speed = parseFloat(speedSlider.value);
+        const speed = speedSlider ? parseFloat(speedSlider.value) : 0.5;
         
         const velocities = {
             'up': { pan: 0, tilt: speed },
@@ -320,6 +345,7 @@ class Dashboard {
         };
         
         const velocity = velocities[direction];
+        if (!velocity) return;
         
         try {
             const response = await fetch('/api/camera/move', {
@@ -340,10 +366,33 @@ class Dashboard {
         }
     }
     
+    async movePTZContinuous(panVelocity, tiltVelocity, duration) {
+        try {
+            const response = await fetch('/api/camera/move', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    pan_velocity: panVelocity,
+                    tilt_velocity: tiltVelocity,
+                    duration: duration
+                })
+            });
+            
+            if (!response.ok) {
+                throw new Error('Move failed');
+            }
+        } catch (error) {
+            console.error('PTZ move error:', error);
+        }
+    }
+    
     updateSpeedDisplay() {
         const speedSlider = document.getElementById('ptz-speed');
         const speedValue = document.getElementById('speed-value');
-        speedValue.textContent = `${(parseFloat(speedSlider.value) * 100).toFixed(0)}%`;
+        
+        if (speedSlider && speedValue) {
+            speedValue.textContent = `${(parseFloat(speedSlider.value) * 100).toFixed(0)}%`;
+        }
     }
     
     // ========================================================================
@@ -356,10 +405,20 @@ class Dashboard {
             const data = await response.json();
             
             const eventsContainer = document.getElementById('events-container');
-            if (!eventsContainer) return;
+            if (!eventsContainer) {
+                console.warn('events-container not found');
+                return;
+            }
             
-            // Handle missing events array
-            const events = data.events || data || [];
+            // Safely extract events array with multiple fallbacks
+            let events = [];
+            if (data && typeof data === 'object') {
+                if (Array.isArray(data.events)) {
+                    events = data.events;
+                } else if (Array.isArray(data)) {
+                    events = data;
+                }
+            }
             
             if (!Array.isArray(events) || events.length === 0) {
                 eventsContainer.innerHTML = '<p class="no-events">No events recorded yet</p>';
@@ -394,6 +453,13 @@ class Dashboard {
         }
     }
     
+    clearEvents() {
+        const eventsContainer = document.getElementById('events-container');
+        if (eventsContainer) {
+            eventsContainer.innerHTML = '<p class="no-events">Events cleared</p>';
+        }
+    }
+    
     // ========================================================================
     // Polling (fallback when WebSocket unavailable)
     // ========================================================================
@@ -425,24 +491,33 @@ class Dashboard {
     // ========================================================================
     
     setupEventListeners() {
-        // Tracking controls
-        document.getElementById('start-tracking-btn')?.addEventListener('click', () => this.startTracking());
-        document.getElementById('stop-tracking-btn')?.addEventListener('click', () => this.stopTracking());
+        // Tracking controls - correct IDs
+        document.getElementById('btn-start-tracking')?.addEventListener('click', () => this.startTracking());
+        document.getElementById('btn-stop-tracking')?.addEventListener('click', () => this.stopTracking());
         
-        // Video controls
-        document.getElementById('fullscreen-btn')?.addEventListener('click', () => this.toggleFullscreen());
+        // Video controls - correct IDs
+        document.getElementById('btn-fullscreen')?.addEventListener('click', () => this.toggleFullscreen());
         
-        // PTZ controls
-        document.getElementById('ptz-up')?.addEventListener('click', () => this.movePTZ('up'));
-        document.getElementById('ptz-down')?.addEventListener('click', () => this.movePTZ('down'));
-        document.getElementById('ptz-left')?.addEventListener('click', () => this.movePTZ('left'));
-        document.getElementById('ptz-right')?.addEventListener('click', () => this.movePTZ('right'));
+        // PTZ dpad controls - use data attributes
+        document.querySelectorAll('.dpad-btn').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                const pan = parseFloat(e.target.dataset.pan || 0);
+                const tilt = parseFloat(e.target.dataset.tilt || 0);
+                
+                if (pan !== 0 || tilt !== 0) {
+                    this.movePTZContinuous(pan, tilt, 0.5);
+                }
+            });
+        });
         
         // Preset selection
-        document.getElementById('preset-select')?.addEventListener('change', () => this.gotoPreset());
+        document.getElementById('btn-goto-preset')?.addEventListener('click', () => this.gotoPreset());
         
         // Speed slider
         document.getElementById('ptz-speed')?.addEventListener('input', () => this.updateSpeedDisplay());
+        
+        // Clear events button
+        document.getElementById('btn-clear-events')?.addEventListener('click', () => this.clearEvents());
         
         // Initialize speed display
         this.updateSpeedDisplay();
