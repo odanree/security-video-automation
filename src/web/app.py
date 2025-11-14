@@ -202,7 +202,7 @@ async def get_status() -> Dict[str, Any]:
             "stream": "running" if stream_handler and not stream_handler.stopped else "stopped",
             "detector": "loaded" if detector else "not loaded",
             "ptz": "connected" if ptz_controller else "disconnected",
-            "tracking": "running" if tracking_engine and tracking_engine.is_running else "stopped"
+            "tracking": "running" if tracking_engine and tracking_engine.running else "stopped"
         },
         "stream_stats": {
             "fps": stream_stats.fps if stream_stats else 0,
@@ -215,56 +215,62 @@ async def get_status() -> Dict[str, Any]:
 
 @app.get("/api/statistics")
 async def get_statistics() -> Dict[str, Any]:
-    """Get tracking statistics"""
-    logger.info(f"Statistics requested - tracking_engine: {tracking_engine is not None}, stream_handler: {stream_handler is not None}")
+    """Get tracking statistics with stream health info"""
     
-    if tracking_engine:
-        stats = tracking_engine.get_statistics()
-        logger.info(f"Returning tracking engine stats: {stats}")
-        return {
-            "frames_processed": stats.get('frames_processed', 0),
-            "detections": stats.get('detections', 0),
-            "tracks": stats.get('tracks', 0),
-            "ptz_movements": stats.get('ptz_movements', 0),
-            "active_events": stats.get('active_events', 0),
-            "completed_events": stats.get('completed_events', 0),
-            "current_mode": stats.get('mode', 'unknown'),
-            "is_running": stats.get('is_running', False)
-        }
-    
-    # Use stream handler stats as fallback when tracking engine not running
-    if stream_handler:
-        try:
-            stream_stats = stream_handler.get_stats()
-            logger.info(f"Stream handler stats: frames_received={stream_stats.frames_received}, fps={stream_stats.fps}, stopped={stream_handler.stopped}")
-            return {
-                "frames_processed": stream_stats.frames_received,
-                "detections": 0,
-                "tracks": 0,
-                "ptz_movements": 0,
-                "active_events": 0,
-                "completed_events": 0,
-                "fps": stream_stats.fps,
-                "frames_dropped": stream_stats.frames_dropped,
-                "is_running": not stream_handler.stopped,
-                "current_mode": "streaming"
-            }
-        except Exception as e:
-            logger.error(f"Error getting stream stats: {e}")
-    
-    # Default fallback
-    logger.warning("Returning default stats - no tracking engine or stream handler available")
-    return {
+    # Base stats structure
+    base_stats = {
         "frames_processed": 0,
         "detections": 0,
         "tracks": 0,
         "ptz_movements": 0,
         "active_events": 0,
         "completed_events": 0,
-        "fps": 0,
+        "current_mode": "unknown",
         "is_running": False,
-        "current_mode": "offline"
+        "fps": 0,
+        "frames_dropped": 0,
+        "stream_connected": False
     }
+    
+    # Get tracking engine stats if RUNNING
+    if tracking_engine and tracking_engine.running:
+        try:
+            stats = tracking_engine.get_statistics()
+            base_stats.update({
+                "frames_processed": stats.get('frames_processed', 0),
+                "detections": stats.get('detections', 0),
+                "tracks": stats.get('tracks', 0),
+                "ptz_movements": stats.get('ptz_movements', 0),
+                "active_events": stats.get('active_events', 0),
+                "completed_events": stats.get('completed_events', 0),
+                "current_mode": stats.get('mode', 'tracking'),
+                "is_running": True
+            })
+        except Exception as e:
+            logger.error(f"Error getting tracking engine stats: {e}")
+    else:
+        # Tracking not running - use stream handler stats
+        base_stats["current_mode"] = "streaming"
+    
+    # Always add stream health info from stream handler (source stream FPS)
+    if stream_handler:
+        try:
+            stream_stats = stream_handler.get_stats()
+            
+            # If tracking is not running, use stream frame count
+            if not (tracking_engine and tracking_engine.running):
+                base_stats["frames_processed"] = stream_stats.frames_received
+            
+            # Update stream stats - always use these for stream health
+            base_stats.update({
+                "fps": stream_stats.fps if stream_stats.is_connected else 0,
+                "frames_dropped": stream_stats.frames_dropped,
+                "stream_connected": stream_stats.is_connected
+            })
+        except Exception as e:
+            logger.error(f"Error getting stream stats: {e}")
+    
+    return base_stats
 
 
 @app.get("/api/camera/info")

@@ -183,6 +183,7 @@ class VideoStreamHandler:
                 
                 with self.lock:
                     self.stats.is_connected = False
+                    self.stats.fps = 0.0  # Reset FPS when disconnected
                 
                 # Try to reconnect
                 if self.reconnect_enabled:

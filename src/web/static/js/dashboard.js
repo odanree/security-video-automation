@@ -180,8 +180,19 @@ class Dashboard {
         // Display additional stats if available
         const fpsElement = document.getElementById('stat-fps');
         if (fpsElement) {
-            fpsElement.textContent = (data.processing_fps || data.fps || 0).toFixed(1);
-            console.log('Updated FPS element:', fpsElement.textContent);
+            // Only update FPS if stream is connected or value is meaningful
+            const fps = data.fps || data.processing_fps || 0;
+            const streamConnected = data.stream_connected !== false;  // Default to true for compatibility
+            
+            if (streamConnected || fps > 0) {
+                fpsElement.textContent = fps.toFixed(1);
+                fpsElement.style.color = fps > 10 ? '#00FF00' : fps > 5 ? '#FFD700' : '#FF4444';
+            } else {
+                // Show loading state if stream not connected
+                fpsElement.textContent = '--';
+                fpsElement.style.color = '#999999';
+            }
+            console.log('Updated FPS element:', fpsElement.textContent, 'connected:', streamConnected);
         } else {
             console.warn('stat-fps element not found!');
         }
@@ -552,6 +563,23 @@ class Dashboard {
     // ========================================================================
     
     startPolling() {
+        // Load statistics immediately on startup
+        (async () => {
+            try {
+                const response = await fetch('/api/statistics');
+                if (response.ok) {
+                    const data = await response.json();
+                    console.log('Initial statistics load:', data);
+                    this.updateStatistics(data);
+                }
+            } catch (e) {
+                console.error('Error loading initial statistics:', e);
+            }
+        })();
+        
+        // Load system status immediately on startup
+        this.loadSystemStatus();
+        
         // Poll statistics every 2 seconds as fallback
         setInterval(async () => {
             try {
