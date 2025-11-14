@@ -11,17 +11,15 @@ tracking:
   # Target object classes to track
   # Available: person, bicycle, car, motorcycle, airplane, bus, train, truck, boat, etc.
   # See COCO dataset for full list of 80 classes
+  # Optimized for person tracking with center-based tracking
   target_classes:
     - "person"
-    - "car"
-    - "truck"
     - "bicycle"
-    - "motorcycle"
   
   # Object detection settings
   detection:
     # Minimum confidence threshold (0.0 to 1.0)
-    min_confidence: 0.6
+    min_confidence: 0.50
     
     # Minimum object size in pixels (width or height)
     min_object_size: 50
@@ -54,19 +52,19 @@ tracking:
       # x_range and y_range are fractions of frame dimensions (0.0 to 1.0)
       x_range: [0.0, 0.33]
       y_range: [0.0, 1.0]
-      preset: "Preset001"
+      preset: "Preset064"
       priority: 1
       
     - name: "zone_center"
       x_range: [0.33, 0.66]
       y_range: [0.0, 1.0]
-      preset: "Preset002"
+      preset: "Preset128"
       priority: 2
       
     - name: "zone_right"
       x_range: [0.66, 1.0]
       y_range: [0.0, 1.0]
-      preset: "Preset003"
+      preset: "Preset192"
       priority: 1
       
     - name: "zone_far_left"
@@ -116,11 +114,11 @@ tracking:
     # Enable PTZ control
     enable_ptz: true
     
-    # Movement speed (0.0 to 1.0)
-    movement_speed: 0.7
+    # Movement speed (0.0 to 1.0) - slower for smooth person tracking
+    movement_speed: 0.3
     
-    # Cooldown between movements (seconds)
-    cooldown_time: 3.0
+    # Cooldown between movements (seconds) - smooth tracking
+    cooldown_time: 0.4
     
     # Anticipatory tracking: move camera before object reaches edge
     anticipatory_tracking: true
@@ -128,11 +126,11 @@ tracking:
     
     # Return to home position after inactivity
     auto_return_home: true
-    home_preset: "Preset002"  # zone_center
-    inactivity_timeout: 60  # seconds
+    home_preset: "Preset005"  # home position - center (idle position)
+    inactivity_timeout: 25  # seconds
     
-    # Maximum PTZ movements per minute (rate limiting)
-    max_movements_per_minute: 20
+    # Maximum PTZ movements per minute (rate limiting) - increased for fast tracking
+    max_movements_per_minute: 300
   
   # Filters and exclusions
   filters:

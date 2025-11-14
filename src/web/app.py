@@ -27,7 +27,7 @@ import logging
 # Import our tracking components
 from src.video.stream_handler import VideoStreamHandler
 from src.ai.object_detector import ObjectDetector
-from src.ai.motion_tracker import MultiObjectTracker
+from src.ai.motion_tracker import MotionTracker
 from src.automation.tracking_engine import TrackingEngine
 from src.camera.ptz_controller import PTZController
 from src.utils.config_loader import ConfigLoader
@@ -61,12 +61,26 @@ templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 config_loader: Optional[ConfigLoader] = None
 stream_handler: Optional[VideoStreamHandler] = None
 detector: Optional[ObjectDetector] = None
-tracker: Optional[MultiObjectTracker] = None
+tracker: Optional[MotionTracker] = None
 tracking_engine: Optional[TrackingEngine] = None
 ptz_controller: Optional[PTZController] = None
 
 # WebSocket connections for live updates
 active_connections: List[WebSocket] = []
+
+# Cache last known stats to show persistent values when tracking stops
+last_known_stats: Dict[str, Any] = {
+    'frames_processed': 0,
+    'detections': 0,
+    'tracks': 0,
+    'ptz_movements': 0,
+    'active_events': 0,
+    'completed_events': 0,
+    'current_preset': None,
+    'is_running': False,
+    'is_paused': False,
+    'mode': 'offline'
+}
 
 
 @app.on_event("startup")
@@ -98,10 +112,13 @@ async def startup_event():
             device=ai_config.get_device()
         )
         
-        # Initialize tracker
-        tracker = MultiObjectTracker(
-            max_distance=100.0,
-            max_age=30
+        # Initialize tracker (TrackingEngine needs MotionTracker, not MultiObjectTracker)
+        from src.ai.motion_tracker import MotionTracker
+        tracker = MotionTracker(
+            history_length=30,
+            movement_threshold=50,
+            stationary_threshold=20,
+            inactive_timeout=2.0
         )
         
         # Initialize PTZ controller
@@ -115,37 +132,16 @@ async def startup_event():
         # Initialize tracking engine
         from src.automation.tracking_engine import TrackingConfig, TrackingZone
         
-        # Create default tracking config
-        tracking_cfg = TrackingConfig(
-            zones=[
-                TrackingZone(
-                    name="zone_left",
-                    x_range=(0.0, 0.33),
-                    y_range=(0.0, 1.0),
-                    preset_token="1",
-                    priority=2
-                ),
-                TrackingZone(
-                    name="zone_center",
-                    x_range=(0.33, 0.66),
-                    y_range=(0.0, 1.0),
-                    preset_token="2",
-                    priority=1
-                ),
-                TrackingZone(
-                    name="zone_right",
-                    x_range=(0.66, 1.0),
-                    y_range=(0.0, 1.0),
-                    preset_token="3",
-                    priority=2
-                ),
-            ],
-            target_classes=['person'],
-            min_confidence=0.6,
-            movement_threshold=100,
-            cooldown_time=2.0,
-            max_tracking_age=3.0
-        )
+        # Load tracking config from YAML instead of hardcoding
+        tracking_cfg = config_loader.build_tracking_engine_config()
+        
+        logger.info(f"✓ Tracking config loaded:")
+        logger.info(f"  - Target classes: {tracking_cfg.target_classes}")
+        logger.info(f"  - Direction triggers: {[d.value for d in tracking_cfg.direction_triggers]}")
+        logger.info(f"  - Zones: {len(tracking_cfg.zones)}")
+        logger.info(f"  - Confidence threshold: {tracking_cfg.min_confidence}")
+        logger.info(f"  - Movement threshold: {tracking_cfg.movement_threshold}")
+        logger.info(f"  - Cooldown time: {tracking_cfg.cooldown_time}")
         
         # Initialize tracking engine
         tracking_engine = TrackingEngine(
@@ -217,6 +213,7 @@ async def get_status() -> Dict[str, Any]:
 @app.get("/api/statistics")
 async def get_statistics() -> Dict[str, Any]:
     """Get tracking statistics with stream health info"""
+    global last_known_stats
     
     # Base stats structure
     base_stats = {
@@ -247,20 +244,20 @@ async def get_statistics() -> Dict[str, Any]:
                 "current_mode": stats.get('mode', 'tracking'),
                 "is_running": True
             })
+            # Cache these stats for when tracking stops
+            last_known_stats = base_stats.copy()
         except Exception as e:
             logger.error(f"Error getting tracking engine stats: {e}")
     else:
-        # Tracking not running - use stream handler stats
-        base_stats["current_mode"] = "streaming"
+        # Tracking not running - use CACHED stats (persistent across stop/start)
+        base_stats.update(last_known_stats)
+        base_stats["is_running"] = False  # But mark tracking as stopped
+        logger.debug(f"Using cached stats: detections={base_stats.get('detections')}, tracks={base_stats.get('tracks')}")
     
     # Always add stream health info from stream handler (source stream FPS)
     if stream_handler:
         try:
             stream_stats = stream_handler.get_stats()
-            
-            # If tracking is not running, use stream frame count
-            if not (tracking_engine and tracking_engine.running):
-                base_stats["frames_processed"] = stream_stats.frames_received
             
             # Update stream stats - always use these for stream health
             base_stats.update({
@@ -344,7 +341,7 @@ async def move_to_preset(preset_token: str, speed: float = 0.5) -> Dict[str, str
 
 @app.post("/api/camera/move")
 async def move_camera(move_data: Dict[str, float]) -> Dict[str, str]:
-    """Continuous camera movement (non-blocking)"""
+    """Continuous camera movement with automatic stop after duration"""
     if not ptz_controller:
         raise HTTPException(status_code=503, detail="PTZ controller not available")
     
@@ -354,17 +351,18 @@ async def move_camera(move_data: Dict[str, float]) -> Dict[str, str]:
         zoom = move_data.get('zoom_velocity', move_data.get('zoom', 0.0))
         duration = move_data.get('duration', 0.5)
         
-        # Non-blocking movement - returns immediately
+        # CRITICAL: Use blocking=True to automatically stop after duration
+        # blocking=False would leave camera moving indefinitely!
         ptz_controller.continuous_move(
             pan_velocity=pan,
             tilt_velocity=tilt,
             zoom_velocity=zoom,
             duration=duration,
-            blocking=False  # Don't wait for movement to complete
+            blocking=True  # CRITICAL: Auto-stop after duration
         )
         return {
             "status": "success",
-            "message": f"Moving camera (pan={pan}, tilt={tilt}, zoom={zoom})"
+            "message": f"Moved camera (pan={pan}, tilt={tilt}, zoom={zoom}) for {duration}s"
         }
     except Exception as e:
         logger.error(f"Error moving camera: {e}")
@@ -558,6 +556,24 @@ async def get_tracking_status() -> Dict[str, Any]:
     }
 
 
+@app.get("/api/detections/current")
+async def get_current_detections() -> List[Dict[str, Any]]:
+    """Get current frame detections for overlay display"""
+    if not tracking_engine or not hasattr(tracking_engine, 'last_detections'):
+        return []
+    
+    # Return latest detections in format expected by desktop app
+    detections = []
+    for det in tracking_engine.last_detections:
+        detections.append({
+            "bbox": det.bbox,  # (x1, y1, x2, y2)
+            "class": det.class_name,
+            "confidence": det.confidence
+        })
+    
+    return detections
+
+
 @app.get("/api/events")
 async def get_events(limit: int = 50) -> List[Dict[str, Any]]:
     """Get recent tracking events"""
@@ -569,12 +585,14 @@ async def get_events(limit: int = 50) -> List[Dict[str, Any]]:
     return [
         {
             "id": event.event_id,
-            "timestamp": event.timestamp.isoformat(),
-            "class_name": event.detection.class_name,
-            "confidence": event.detection.confidence,
+            "timestamp": event.start_time,  # Use start_time, not timestamp
+            "object_id": event.object_id,
+            "class_name": event.class_name,
             "direction": event.direction.value if event.direction else None,
-            "zone": event.zone.name if event.zone else None,
-            "action": event.action_taken
+            "zones": event.zone_transitions,  # List of zone transitions
+            "ptz_actions": event.ptz_actions,  # List of PTZ presets triggered
+            "frame_count": event.frame_count,
+            "duration": (event.end_time - event.start_time) if event.end_time else None
         }
         for event in events[-limit:]
     ]
@@ -585,67 +603,65 @@ async def get_events(limit: int = 50) -> List[Dict[str, Any]]:
 # ============================================================================
 
 def generate_frames(show_detections=False):
-    """Generate video frames - optionally with detection overlays
+    """Generate video frames - optimized for browser rendering limits
     
-    CRITICAL: No artificial frame rate throttling!
-    Frames sent as fast as they arrive (REAL latency is ~15-25ms)
-    vs artificial throttling adding 20-50ms delay.
+    KEY INSIGHT: Browser JavaScript can only render ~10-15 FPS due to:
+    - JavaScript execution overhead
+    - Canvas rendering timing
+    - Browser refresh rate sync
+    
+    Generating 160+ FPS is wasteful. Cap at 15 FPS to reduce CPU/network load
+    while maintaining smooth appearance (10 FPS = 100ms per frame, human eye
+    perceives as smooth for security/surveillance).
     """
     import time
     frame_count = 0
-    last_detections = []
-    last_frame = None
+    last_frame_time = time.time()
     
-    JPEG_QUALITY = 20  # Minimal quality for absolute fastest encoding
+    # Target 15 FPS (67ms per frame) - what browser can actually display
+    # 1000ms / 15 = 67ms per frame
+    TARGET_FRAME_TIME = 1.0 / 15  # ~0.067 seconds
+    
+    # JPEG quality: 15 = ultra-fast encoding
+    JPEG_QUALITY = 15
     
     while True:
         if not stream_handler or stream_handler.stopped:
-            logger.warning("Stream handler stopped or not available")
             break
         
         try:
-            # Use read_latest() to always get newest frame (skip buffered)
-            # This minimizes latency from buffering
-            frame = stream_handler.read_latest()
+            # Rate limit: only send frame if enough time has passed
+            current_time = time.time()
+            time_since_last_frame = current_time - last_frame_time
             
-            # Skip old frames - only send new ones (skip reuse)
-            if frame is None:
-                time.sleep(0.0001)  # Tiny sleep, don't busy-wait
+            if time_since_last_frame < TARGET_FRAME_TIME:
+                # Wait for next frame interval
+                sleep_time = TARGET_FRAME_TIME - time_since_last_frame
+                time.sleep(sleep_time * 0.9)  # Sleep 90% to account for jitter
                 continue
             
-            last_frame = frame.copy()
+            last_frame_time = current_time
             
-            # Run detection if overlays are enabled
-            # NOTE: Detection adds 50-100ms latency (YOLOv8 processing)
-            # Default path (show_detections=False) skips this entirely
-            if show_detections and detector:
-                last_detections = detector.detect(frame)
-                
-                # Draw detections on frame
-                if last_detections:
-                    frame = detector.draw_detections(frame, last_detections)
+            # Get frame from non-blocking buffer
+            frame = stream_handler.read_direct()
+            if frame is None:
+                continue
             
-            # Encode frame as JPEG
+            # Ultra-fast path: NO copies, NO overlays, just encode
             ret, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY])
             
             if not ret:
-                logger.warning("Failed to encode frame")
                 continue
             
             frame_bytes = buffer.tobytes()
             frame_count += 1
             
-            # Yield frame in multipart format
+            # Send MJPEG frame
             yield (b'--frame\r\n'
                    b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
             
-            # CRITICAL: NO SLEEP-BASED RATE LIMITING!
-            # Artificial throttling adds 20-50ms latency
-            # Camera naturally delivers frames at 16-20 FPS
-            # Let them flow as fast as they arrive
-            
         except Exception as e:
-            logger.error(f"Error generating frame: {e}", exc_info=True)
+            logger.error(f"Stream error: {e}")
             break
 
 
@@ -719,13 +735,16 @@ async def websocket_video_stream(websocket: WebSocket):
 @app.websocket("/ws/updates")
 async def websocket_endpoint(websocket: WebSocket):
     """WebSocket for pushing real-time statistics and events"""
+    global last_known_stats
+    
     await websocket.accept()
     active_connections.append(websocket)
     
     try:
         while True:
             # Send statistics every second
-            if tracking_engine:
+            if tracking_engine is not None and tracking_engine.running:
+                # ✅ Tracking engine is active - get live stats and cache them
                 stats = tracking_engine.get_statistics()
                 
                 # Always add stream handler stats for FPS and connection info
@@ -740,54 +759,44 @@ async def websocket_endpoint(websocket: WebSocket):
                         stats['fps'] = 0
                         stats['frames_dropped'] = 0
                         stats['stream_connected'] = False
-                        
-            elif stream_handler:
-                # Use stream handler stats as fallback
+                
+                # Get latest detections from tracking engine
                 try:
-                    stream_stats = stream_handler.get_stats()
-                    stats = {
-                        'frames_processed': stream_stats.frames_received,
-                        'detections': 0,
-                        'tracks': 0,
-                        'ptz_movements': 0,
-                        'active_events': 0,
-                        'completed_events': 0,
-                        'current_preset': None,
-                        'is_running': not stream_handler.stopped,
-                        'is_paused': False,
-                        'mode': 'streaming',
-                        'fps': stream_stats.fps if stream_stats.is_connected else 0,
-                        'frames_dropped': stream_stats.frames_dropped,
-                        'stream_connected': stream_stats.is_connected
-                    }
+                    if hasattr(tracking_engine, 'last_detections') and tracking_engine.last_detections:
+                        detection_list = []
+                        for d in tracking_engine.last_detections:
+                            detection_list.append({
+                                'class_name': d.class_name,
+                                'confidence': float(d.confidence),
+                                'bbox': list(d.bbox) if hasattr(d.bbox, '__iter__') else d.bbox
+                            })
+                        stats['detections_data'] = detection_list
                 except Exception as e:
-                    logger.error(f"Error getting stream stats in WebSocket: {e}")
-                    stats = {
-                        'frames_processed': 0,
-                        'detections': 0,
-                        'tracks': 0,
-                        'ptz_movements': 0,
-                        'active_events': 0,
-                        'completed_events': 0,
-                        'current_preset': None,
-                        'is_running': False,
-                        'is_paused': False,
-                        'mode': 'offline'
-                    }
+                    logger.debug(f"Error getting detections for WebSocket: {e}")
+                
+                # 💾 Cache these stats for when tracking stops
+                last_known_stats = stats.copy()
+                logger.debug(f"Cached stats: frames={stats.get('frames_processed')}, detections={stats.get('detections')}, tracks={stats.get('tracks')}")
+                
             else:
-                # Send default stats if neither available
-                stats = {
-                    'frames_processed': 0,
-                    'detections': 0,
-                    'tracks': 0,
-                    'ptz_movements': 0,
-                    'active_events': 0,
-                    'completed_events': 0,
-                    'current_preset': None,
-                    'is_running': False,
-                    'is_paused': False,
-                    'mode': 'idle'
-                }
+                # ❌ Tracking engine is stopped - use cached stats (NOT zeros!)
+                stats = last_known_stats.copy()
+                logger.warning(f"Tracking stopped! Using cached stats: frames={stats.get('frames_processed')}, detections={stats.get('detections')}, tracks={stats.get('tracks')}")
+                
+                # Keep FPS and connection info up-to-date even when tracking is stopped
+                if stream_handler:
+                    try:
+                        stream_stats = stream_handler.get_stats()
+                        stats['fps'] = stream_stats.fps if stream_stats.is_connected else 0
+                        stats['frames_dropped'] = stream_stats.frames_dropped
+                        stats['stream_connected'] = stream_stats.is_connected
+                    except Exception as e:
+                        stats['fps'] = 0
+                        stats['frames_dropped'] = 0
+                        stats['stream_connected'] = False
+                
+                # Mark that tracking is not running
+                stats['is_running'] = False
             
             await websocket.send_json({
                 "type": "statistics",

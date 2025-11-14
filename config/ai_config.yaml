@@ -21,7 +21,7 @@ object_detection:
   # Inference settings
   inference:
     # Device: cpu, cuda, dml (DirectML for AMD GPU), mps (for Apple Silicon)
-    device: "cpu"  # Using CPU - DirectML has compatibility issues with YOLOv8
+    device: "cpu"  # Reverted to CPU (DirectML has inference compatibility issues)
     
     # Batch processing
     batch_size: 1  # Number of frames to process at once

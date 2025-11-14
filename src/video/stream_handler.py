@@ -100,6 +100,11 @@ class VideoStreamHandler:
         self.capture: Optional[cv2.VideoCapture] = None
         self.frame_queue: Queue = Queue(maxsize=buffer_size)
         
+        # ⭐ Direct frame buffer for web streaming (no queue contention)
+        # Avoids blocking when tracking engine reads from queue
+        self.latest_frame: Optional[cv2.Mat] = None
+        self.latest_frame_lock = threading.Lock()
+        
         # Thread control
         self.stopped = False
         self.thread: Optional[threading.Thread] = None
@@ -227,12 +232,9 @@ class VideoStreamHandler:
             
             # Read frame
             try:
-                # OPTIMIZATION: Skip stale frames in the buffer
-                # Read and discard up to 2 frames to get the latest one (minimal latency)
-                for _ in range(2):
-                    ret, frame = self.capture.read()
-                    if not ret:
-                        break
+                # Read single frame for full FPS display
+                # (Previously skipped 2 frames for latency optimization, but reduced FPS to 7.7)
+                ret, frame = self.capture.read()
                 
                 if not ret:
                     logger.warning(f"Failed to read frame from '{self.name}'")
@@ -296,6 +298,11 @@ class VideoStreamHandler:
                     
                     self.frame_queue.put(frame)
                 
+                # ⭐ Also store in direct buffer for web streaming (non-blocking)
+                # This ensures web server always gets latest frame without blocking
+                with self.latest_frame_lock:
+                    self.latest_frame = frame.copy()
+                
             except Exception as e:
                 logger.error(f"Error reading frame from '{self.name}': {e}")
                 time.sleep(0.1)
@@ -345,6 +352,21 @@ class VideoStreamHandler:
                 break
         
         return frame
+    
+    def read_direct(self) -> Optional[cv2.Mat]:
+        """
+        ⭐ Read latest frame directly from buffer (NON-BLOCKING)
+        
+        Used by web streaming to avoid blocking when tracking engine reads from queue.
+        Returns immediately with latest available frame or None.
+        
+        Returns:
+            Most recent frame or None
+        """
+        with self.latest_frame_lock:
+            if self.latest_frame is not None:
+                return self.latest_frame.copy()
+        return None
     
     def is_opened(self) -> bool:
         """

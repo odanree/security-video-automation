@@ -41,6 +41,42 @@ C:\Users\Danh\Desktop\security-video-automation\venv\Scripts\python.exe src/main
 
 **Never use:** `python` alone without venv - it may use system Python or fail with "Python not found"
 
+### Dashboard Restart Script (ALWAYS USE THIS)
+
+**⚠️ CRITICAL:** After making ANY changes to code or configuration, ALWAYS use the official restart script:
+
+```powershell
+# The CORRECT way to restart
+taskkill /F /IM python.exe 2>$null; .\restart_dashboard.ps1
+```
+
+**The script properly:**
+- Kills existing Python processes
+- Waits for cleanup to complete
+- Activates the virtual environment
+- Starts the dashboard with fresh state
+
+**Script location:** `restart_dashboard.ps1` (root directory, not venv)
+
+**Why this matters:**
+- ✅ Ensures venv is activated before Python runs
+- ✅ Properly cleans up old processes
+- ✅ Prevents "port already in use" errors
+- ✅ Loads configuration changes
+- ✅ Is part of the official workflow
+
+**Never:** Try to restart manually with commands like:
+```powershell
+# ❌ Wrong - doesn't properly activate venv
+python start_dashboard.py
+
+# ❌ Wrong - incomplete cleanup
+taskkill /F /IM python.exe; python start_dashboard.py
+
+# ❌ Wrong - manual activation may fail
+.\venv\Scripts\activate; python start_dashboard.py
+```
+
 ## Architecture
 
 ### Core Components
@@ -1189,19 +1225,51 @@ def dahua_goto_preset(ip: str, username: str, password: str, preset_id: int):
 
 ## Git Workflow & Commits
 
+### Dashboard Restart (CRITICAL - Always Use the PowerShell Script)
+
+**⚠️ IMPORTANT:** When making changes to code or config, ALWAYS restart using the **PowerShell script** in the root directory, NOT manual commands.
+
+**CORRECT way to restart dashboard:**
+```powershell
+# Kill Python and restart using the official script
+taskkill /F /IM python.exe 2>$null; .\restart_dashboard.ps1
+```
+
+**Script file:** `restart_dashboard.ps1` (root directory)
+
+**Why the script?**
+- Properly activates venv before running
+- Handles cleanup and delays correctly
+- Ensures fresh Python process
+- Part of the project's official workflow
+
+**WRONG ways (don't do these):**
+```powershell
+# ❌ Wrong - doesn't use the script
+.\venv\Scripts\activate; python start_dashboard.py
+
+# ❌ Wrong - no venv activation
+python start_dashboard.py
+
+# ❌ Wrong - incomplete cleanup
+taskkill /F /IM python.exe; python start_dashboard.py
+```
+
+**Always remember:** After ANY code or config change → Use the restart script
+
 ### ⚠️ CRITICAL: Test Before Committing
 
 **NEVER commit changes without testing first.** This prevents broken code from entering the repository.
 
 **Testing Workflow:**
 1. Make changes to code
-2. **Restart dashboard or service** - Ensure changes are loaded
+2. **Restart dashboard** - Use the PowerShell script: `taskkill /F /IM python.exe 2>$null; .\restart_dashboard.ps1`
 3. **Test functionality** - Verify changes work as intended
 4. **Only then commit** - After verification
 
 **Example:** If optimizing WebSocket latency:
 1. Edit `src/web/app.py`
-2. Restart dashboard: `taskkill /F /IM python.exe; .\restart_dashboard.ps1`
+2. Restart dashboard: `taskkill /F /IM python.exe 2>$null; .\restart_dashboard.ps1`
 3. Open http://localhost:8000 and test latency
 4. Verify improvements work
 5. **THEN** commit with: `git commit -m "perf(stream): reduce latency..."`

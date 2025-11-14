@@ -12,6 +12,11 @@ class Dashboard {
         this.isDetectionMode = false;  // Track current detection mode for FPS display
         this.streamUrl = '/api/video/stream';
         
+        // Detection cache freshness tracking
+        this.lastDetections = [];
+        this.lastDetectionUpdateTime = 0;
+        this.detectionStaleTimeout = 2000;  // Clear detections if stale for 2 seconds
+        
         this.init();
     }
     
@@ -47,6 +52,11 @@ class Dashboard {
                 // Handle different message types
                 if (message.type === 'statistics') {
                     this.updateStatistics(message.data);
+                    // Store detection data if available
+                    if (message.data.detections_data) {
+                        this.lastDetections = message.data.detections_data;
+                        this.lastDetectionUpdateTime = Date.now();  // ⭐ Track when updated
+                    }
                 } else if (message.type === 'event') {
                     this.addEventLog(message.data);
                 }
@@ -118,6 +128,11 @@ class Dashboard {
         let firstFrame = false;
         let partialBuffer = new ArrayBuffer(0);
         const headerSize = 4;
+        
+        // Store for detection drawing
+        this.lastDetections = [];
+        this.canvas = canvas;
+        this.ctx = ctx;
         
         wsVideo.onopen = () => {
             // Stream connected
@@ -197,6 +212,12 @@ class Dashboard {
                 
                 // Draw image to canvas
                 ctx.drawImage(img, 0, 0);
+                
+                // Draw detection overlays if enabled
+                if (this.isDetectionMode && this.lastDetections && this.lastDetections.length > 0) {
+                    this.drawDetectionBoxes(ctx, this.lastDetections, canvas.width, canvas.height);
+                }
+                
                 URL.revokeObjectURL(url);
             };
             
@@ -207,6 +228,58 @@ class Dashboard {
             img.src = url;
         } catch (e) {
             console.error('JPEG decode error:', e);
+        }
+    }
+    
+    drawDetectionBoxes(ctx, detections, canvasWidth, canvasHeight) {
+        if (!detections || detections.length === 0) return;
+        
+        // ⭐ Check if detections are stale (e.g., camera moved manually)
+        // If no updates in 2 seconds, don't draw boxes (they're from old camera position)
+        const timeSinceUpdate = Date.now() - this.lastDetectionUpdateTime;
+        if (timeSinceUpdate > this.detectionStaleTimeout) {
+            return;  // Detections are stale, don't draw
+        }
+        
+        // Draw each detection box
+        for (const detection of detections) {
+            try {
+                // Extract detection data
+                const bbox = detection.bbox || detection.box;  // [x1, y1, x2, y2]
+                if (!bbox || bbox.length < 4) continue;
+                
+                const [x1, y1, x2, y2] = bbox;
+                const confidence = detection.confidence || 0.9;
+                const label = detection.class_name || detection.class || 'Object';
+                
+                // Draw bounding box
+                ctx.strokeStyle = '#00FF00';  // Green for objects
+                ctx.lineWidth = 2;
+                ctx.strokeRect(x1, y1, x2 - x1, y2 - y1);
+                
+                // Draw label background
+                const labelText = `${label} ${(confidence * 100).toFixed(0)}%`;
+                ctx.font = 'bold 12px Arial';
+                const textMetrics = ctx.measureText(labelText);
+                const textHeight = 16;
+                const textPadding = 4;
+                
+                ctx.fillStyle = 'rgba(0, 255, 0, 0.8)';
+                ctx.fillRect(
+                    x1,
+                    y1 - textHeight - textPadding,
+                    textMetrics.width + textPadding * 2,
+                    textHeight + textPadding
+                );
+                
+                // Draw label text
+                ctx.fillStyle = '#000000';
+                ctx.fillText(labelText, x1 + textPadding, y1 - textPadding);
+                
+            } catch (e) {
+                // Skip this detection if there's an error
+                continue;
+            }
         }
     }
     
@@ -832,7 +905,6 @@ class Dashboard {
     toggleDetections() {
         const canvas = document.getElementById('video-canvas');
         const btn = document.getElementById('btn-toggle-detections');
-        const overlay = document.getElementById('video-overlay');
         
         if (!canvas) return;
         
@@ -840,52 +912,19 @@ class Dashboard {
         this.isDetectionMode = !this.isDetectionMode;
         
         if (this.isDetectionMode) {
-            // Switch to MJPEG stream with detection overlays
+            // Show detection overlays on canvas
             btn.style.opacity = '1.0';
-            btn.title = 'Disable Detection Overlays (lower latency without detection)';
-            
-            // Show loading indicator
-            overlay.classList.remove('hidden');
-            
-            // Create img element for MJPEG stream
-            const img = document.createElement('img');
-            img.id = 'video-stream-detection';
-            img.src = '/api/video/stream?detections=true&t=' + Date.now();
-            img.style.width = '100%';
-            img.style.height = 'auto';
-            img.style.display = 'block';
-            
-            // Replace canvas with img
-            canvas.style.display = 'none';
-            canvas.parentElement.insertBefore(img, canvas);
-            
-            img.onload = () => {
-                overlay.classList.add('hidden');
-            };
-            
-            img.onerror = () => {
-                overlay.classList.add('hidden');
-            };
-            
+            btn.title = 'Detection Overlays: ON';
+            canvas.style.filter = 'brightness(0.9)';  // Slight visual feedback
+            this.showNotification('Detection Overlays: ON', 'success');
+            console.log('Detection mode enabled');
         } else {
-            // Switch back to WebSocket stream (no detection, faster)
+            // Hide detection overlays
             btn.style.opacity = '0.5';
-            btn.title = 'Enable Detection Overlays (adds ~50-100ms latency)';
-            
-            // Remove MJPEG img if it exists
-            const img = document.getElementById('video-stream-detection');
-            if (img) {
-                img.remove();
-            }
-            
-            // Show canvas again
-            canvas.style.display = 'block';
-            overlay.classList.remove('hidden');
-            
-            // WebSocket should auto-reconnect
-            setTimeout(() => {
-                overlay.classList.add('hidden');
-            }, 2000);
+            btn.title = 'Detection Overlays: OFF';
+            canvas.style.filter = 'brightness(1.0)';
+            this.showNotification('Detection Overlays: OFF', 'info');
+            console.log('Detection mode disabled');
         }
     }
     

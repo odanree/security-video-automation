@@ -157,13 +157,17 @@ class PTZController:
                 'Zoom': {'x': speed}
             }
             
-            logger.info(f"Moving to preset {preset_token} at speed {speed}")
+            # ⭐ DETAILED LOG: Log the actual ONVIF command being sent
+            logger.warning(f"⭐ [PTZ COMMAND] GotoPreset: token={preset_token}, speed={speed}, profile_token={self.profile_token}")
+            print(f"⭐ [PTZ COMMAND] GotoPreset: token={preset_token}, speed={speed}")
+            
             self.ptz_service.GotoPreset(request)
             
+            logger.info(f"✓ Successfully moved to preset {preset_token}")
             return True
             
         except Exception as e:
-            logger.error(f"Failed to move to preset {preset_token}: {e}")
+            logger.error(f"✗ Failed to move to preset {preset_token}: {e}")
             return False
     
     def continuous_move(
@@ -207,10 +211,9 @@ class PTZController:
                 'Zoom': {'x': zoom_velocity}
             }
             
-            logger.debug(
-                f"Continuous move: pan={pan_velocity}, tilt={tilt_velocity}, "
-                f"zoom={zoom_velocity}, blocking={blocking}"
-            )
+            # ⭐ DETAILED LOG: Log the actual ONVIF command being sent
+            logger.warning(f"⭐ [PTZ COMMAND] ContinuousMove: pan={pan_velocity}, tilt={tilt_velocity}, zoom={zoom_velocity}, blocking={blocking}, duration={duration}")
+            print(f"⭐ [PTZ COMMAND] ContinuousMove: pan={pan_velocity}, tilt={tilt_velocity}, zoom={tilt_velocity}")
             
             # Start movement
             self.ptz_service.ContinuousMove(request)
@@ -223,7 +226,7 @@ class PTZController:
             return True
             
         except Exception as e:
-            logger.error(f"Continuous move failed: {e}")
+            logger.error(f"✗ Continuous move failed: {e}")
             return False
     
     def absolute_move(

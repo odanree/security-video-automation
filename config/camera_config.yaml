@@ -16,14 +16,14 @@ cameras:
     # Stream configuration
     stream:
       # RTSP URL format: rtsp://username:password@ip:port/path
-      # Obtained from camera via ONVIF GetStreamUri
-      rtsp_url: "rtsp://admin:Windows98@192.168.1.107:554/11"
+      # Using /12 stream (800×600) for both desktop and backend
+      rtsp_url: "rtsp://admin:Windows98@192.168.1.107:554/12"
       # Alternative: Use HTTP stream if RTSP unavailable
       http_url: "http://192.168.1.107:8080/video"
       
       # Stream settings
-      resolution: [640, 480]  # Reasonable resolution (fits UI without pushing controls off)
-      fps: 30  # 30 FPS target - faster frame delivery reduces latency
+      resolution: [800, 600]  # Stream /12 resolution
+      fps: 15  # Stream /12 FPS
       buffer_size: 1  # Ultra-minimal buffer (only 1 frame) for instant latency
       
       # Reconnection settings

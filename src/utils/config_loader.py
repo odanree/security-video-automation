@@ -248,6 +248,81 @@ class ConfigLoader:
         config = self.load_camera_config()
         return config.get('global', {})
     
+    def build_tracking_engine_config(self):
+        """
+        Build TrackingConfig for TrackingEngine from YAML configuration
+        
+        Converts YAML tracking_rules.yaml into TrackingEngine's TrackingConfig
+        with proper Direction enums and TrackingZone objects.
+        
+        Returns:
+            TrackingConfig object ready for TrackingEngine initialization
+        """
+        from src.automation.tracking_engine import TrackingConfig, TrackingZone
+        from src.ai.motion_tracker import Direction
+        
+        tracking_raw = self.load_tracking_config()
+        
+        # Build zones
+        zones = []
+        for zone_cfg in tracking_raw.zones:
+            x_range = zone_cfg.get('x_range', [0, 1])
+            y_range = zone_cfg.get('y_range', [0, 1])
+            
+            zone = TrackingZone(
+                name=zone_cfg.get('name', ''),
+                x_range=(float(x_range[0]), float(x_range[1])),
+                y_range=(float(y_range[0]), float(y_range[1])),
+                preset_token=zone_cfg.get('preset', '1'),
+                priority=zone_cfg.get('priority', 0)
+            )
+            zones.append(zone)
+        
+        # Build direction triggers list
+        direction_triggers = []
+        for direction_name, direction_cfg in tracking_raw.direction_triggers.items():
+            if direction_cfg.get('enabled', False):
+                # Map direction names to Direction enums
+                direction_map = {
+                    'left_to_right': Direction.LEFT_TO_RIGHT,
+                    'right_to_left': Direction.RIGHT_TO_LEFT,
+                    'top_to_bottom': Direction.TOP_TO_BOTTOM,
+                    'bottom_to_top': Direction.BOTTOM_TO_TOP,
+                }
+                
+                if direction_name in direction_map:
+                    direction_triggers.append(direction_map[direction_name])
+        
+        # Get motion settings
+        motion_cfg = tracking_raw.motion or {}
+        movement_threshold = motion_cfg.get('movement_threshold', 50)
+        
+        # Get detection settings
+        detection_cfg = tracking_raw.detection or {}
+        min_confidence = detection_cfg.get('min_confidence', 0.5)
+        
+        # Get PTZ settings
+        ptz_cfg = tracking_raw.ptz or {}
+        cooldown_time = ptz_cfg.get('cooldown_time', 3.0)
+        home_preset = ptz_cfg.get('home_preset', 'Preset004')
+        inactivity_timeout = ptz_cfg.get('inactivity_timeout', 5.0)
+        
+        # Create TrackingConfig
+        config = TrackingConfig(
+            zones=zones,
+            target_classes=tracking_raw.target_classes,
+            direction_triggers=direction_triggers if direction_triggers else [Direction.LEFT_TO_RIGHT, Direction.RIGHT_TO_LEFT],
+            min_confidence=min_confidence,
+            movement_threshold=movement_threshold,
+            cooldown_time=cooldown_time,
+            max_tracking_age=3.0,
+            enable_recording=False,
+            home_preset=home_preset,
+            inactivity_timeout=inactivity_timeout
+        )
+        
+        return config
+    
     def validate_config(self) -> bool:
         """
         Validate all configuration files
