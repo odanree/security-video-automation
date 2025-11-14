@@ -566,12 +566,14 @@ async def get_events(limit: int = 50) -> List[Dict[str, Any]]:
     return [
         {
             "id": event.event_id,
-            "timestamp": event.timestamp.isoformat(),
-            "class_name": event.detection.class_name,
-            "confidence": event.detection.confidence,
+            "timestamp": event.start_time,  # Use start_time, not timestamp
+            "object_id": event.object_id,
+            "class_name": event.class_name,
             "direction": event.direction.value if event.direction else None,
-            "zone": event.zone.name if event.zone else None,
-            "action": event.action_taken
+            "zones": event.zone_transitions,  # List of zone transitions
+            "ptz_actions": event.ptz_actions,  # List of PTZ presets triggered
+            "frame_count": event.frame_count,
+            "duration": (event.end_time - event.start_time) if event.end_time else None
         }
         for event in events[-limit:]
     ]
