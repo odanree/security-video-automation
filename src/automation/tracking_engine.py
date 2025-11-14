@@ -160,7 +160,7 @@ class TrackingEngine:
         self.current_preset: Optional[str] = None
         self.last_ptz_time: float = 0.0
         self.last_movement_time: float = 0.0  # Track inactivity for home return
-        self.home_preset: str = "Preset002"  # Return to center/home when inactive
+        self.home_preset: str = "Preset004"  # Return to home when inactive
         self.inactivity_timeout: float = 5.0  # Seconds before returning home
         self.active_events: Dict[str, TrackingEvent] = {}
         self.completed_events: List[TrackingEvent] = []
