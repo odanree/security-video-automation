@@ -82,10 +82,8 @@
                             </div>
                         </div>
                         <div class="video-container" id="video-container">
-                            <img id="video-stream" 
-                                 src="/api/video/stream"
-                                 alt="Camera Stream"
-                                 style="width: 100%; height: auto;">
+                            <canvas id="video-canvas" 
+                                    style="width: 100%; height: auto; background-color: #000; display: block;"></canvas>
                             <div class="video-overlay" id="video-overlay">
                                 <div class="loading-spinner"></div>
                                 <p>Loading camera feed...</p>

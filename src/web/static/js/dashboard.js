@@ -92,29 +92,109 @@ class Dashboard {
     }
     
     // ========================================================================
-    // Video Stream
+    // Video Stream - WebSocket Binary (Ultra-Low Latency)
     // ========================================================================
     
     initializeVideoStream() {
-        const videoElement = document.getElementById('video-stream');
-        const videoOverlay = document.getElementById('video-overlay');
+        this.setupWebSocketVideoStream();
+    }
+    
+    setupWebSocketVideoStream() {
+        const canvas = document.getElementById('video-canvas');
+        const overlay = document.getElementById('video-overlay');
+        const ctx = canvas.getContext('2d', { willReadFrequently: true });
         
-        // Source is already set in HTML to /api/video/stream
-        // Just set up event handlers
+        if (!ctx) {
+            console.warn('Canvas context not available');
+            return;
+        }
         
-        // Hide overlay when image loads
-        videoElement.onload = () => {
-            videoOverlay.classList.add('hidden');
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const wsVideoUrl = `${protocol}//${window.location.host}/ws/video`;
+        
+        const wsVideo = new WebSocket(wsVideoUrl);
+        wsVideo.binaryType = 'arraybuffer';
+        
+        let firstFrame = false;
+        let frameBuffer = new ArrayBuffer(0);
+        const headerSize = 4; // 4-byte frame size
+        
+        wsVideo.onopen = () => {
+            // Stream connected
         };
         
-        videoElement.onerror = () => {
-            videoOverlay.classList.add('hidden');
+        wsVideo.onmessage = (event) => {
+            try {
+                // Append incoming data to buffer
+                const newData = new Uint8Array(event.data);
+                const oldBuffer = new Uint8Array(frameBuffer);
+                frameBuffer = new ArrayBuffer(oldBuffer.length + newData.length);
+                const combined = new Uint8Array(frameBuffer);
+                combined.set(oldBuffer);
+                combined.set(newData, oldBuffer.length);
+                
+                // Process complete frames
+                while (frameBuffer.byteLength >= headerSize) {
+                    const view = new DataView(frameBuffer);
+                    const frameSize = view.getUint32(0, true); // Little-endian
+                    
+                    if (frameBuffer.byteLength >= headerSize + frameSize) {
+                        // We have a complete frame
+                        const frameData = frameBuffer.slice(headerSize, headerSize + frameSize);
+                        frameBuffer = frameBuffer.slice(headerSize + frameSize);
+                        
+                        // Decode JPEG and display
+                        this.displayFrameFromJPEG(canvas, ctx, frameData);
+                        
+                        if (!firstFrame) {
+                            overlay.classList.add('hidden');
+                            firstFrame = true;
+                        }
+                    } else {
+                        break; // Wait for more data
+                    }
+                }
+            } catch (e) {
+                console.error('Frame processing error:', e);
+            }
         };
         
-        // Fallback: hide spinner after 2 seconds regardless
-        setTimeout(() => {
-            videoOverlay.classList.add('hidden');
-        }, 2000);
+        wsVideo.onerror = (error) => {
+            console.error('WebSocket video error:', error);
+        };
+        
+        wsVideo.onclose = () => {
+            // Attempt reconnect after delay
+            setTimeout(() => this.setupWebSocketVideoStream(), 2000);
+        };
+    }
+    
+    displayFrameFromJPEG(canvas, ctx, jpegData) {
+        // Convert JPEG binary data to blob and decode
+        const blob = new Blob([jpegData], { type: 'image/jpeg' });
+        const url = URL.createObjectURL(blob);
+        
+        const img = new Image();
+        img.onload = () => {
+            // Set canvas size to match image (only on first frame or size change)
+            if (canvas.width !== img.width || canvas.height !== img.height) {
+                canvas.width = img.width;
+                canvas.height = img.height;
+            }
+            
+            // Draw image to canvas
+            ctx.drawImage(img, 0, 0);
+            
+            // Clean up blob URL
+            URL.revokeObjectURL(url);
+        };
+        
+        img.onerror = () => {
+            URL.revokeObjectURL(url);
+            console.warn('Failed to decode frame');
+        };
+        
+        img.src = url;
     }
     
     toggleFullscreen() {
