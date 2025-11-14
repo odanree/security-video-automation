@@ -194,8 +194,8 @@ class CameraTrackerApp(QMainWindow):
         self.video_label.setStyleSheet("background-color: black; border: 2px solid #555;")
         self.video_label.setMinimumSize(800, 600)  # Reasonable minimum
         self.video_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)  # Expand both directions
-        self.video_label.setScaledContents(True)  # Scale to fill space
-        self.video_label.setAlignment(Qt.AlignCenter)
+        self.video_label.setScaledContents(False)  # Don't stretch - we'll scale manually with aspect ratio
+        self.video_label.setAlignment(Qt.AlignCenter)  # Center the image
         left_layout.addWidget(self.video_label, 1)  # Stretch factor = 1
         
         # FPS and info label
@@ -584,8 +584,23 @@ class CameraTrackerApp(QMainWindow):
         
         pixmap = QPixmap.fromImage(qt_image)
         
-        # Display at full size (will scale automatically due to setScaledContents(True))
-        self.video_label.setPixmap(pixmap)
+        # Scale pixmap to fit label while maintaining aspect ratio
+        # Get label's current size
+        label_width = self.video_label.width()
+        label_height = self.video_label.height()
+        
+        if label_width > 0 and label_height > 0:
+            # Scale pixmap to fit within label while keeping aspect ratio
+            scaled_pixmap = pixmap.scaledToWidth(label_width, Qt.SmoothTransformation) if pixmap.width() > 0 else pixmap
+            
+            # If scaled height exceeds label height, scale to height instead
+            if scaled_pixmap.height() > label_height:
+                scaled_pixmap = pixmap.scaledToHeight(label_height, Qt.SmoothTransformation)
+            
+            self.video_label.setPixmap(scaled_pixmap)
+        else:
+            # Label not ready yet, just set pixmap (will scale on resize)
+            self.video_label.setPixmap(pixmap)
     
     def draw_detections_overlay(self, frame: np.ndarray) -> np.ndarray:
         """Draw detection boxes on frame (uses cached detections to avoid HTTP overhead)"""
