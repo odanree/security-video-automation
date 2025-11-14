@@ -430,8 +430,8 @@ class TrackingEngine:
         """
         Determine if tracking action should be triggered
         
-        For center-of-frame tracking: Trigger on EVERY detected object to ensure
-        continuous centering, not just on directional changes.
+        For center-of-frame tracking: Only track MOVING objects (not stationary).
+        Ignores stationary objects to save PTZ movements and power.
         
         Args:
             detection: Detection result
@@ -441,8 +441,9 @@ class TrackingEngine:
         Returns:
             True if action should be triggered
         """
-        # For center-of-frame tracking, we track ANY detected object
-        # Not just ones matching direction_triggers
+        # CRITICAL: Don't track stationary objects - waste of PTZ movements
+        if direction == Direction.STATIONARY:
+            return False
         
         # Check if object has been tracked long enough (avoid tracking for 1-2 frames)
         if track_info.frames_tracked < 2:
