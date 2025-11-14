@@ -183,6 +183,15 @@ class TrackingEngine:
         self.tracking_count = 0
         self.ptz_movement_count = 0
         
+        # ⭐ ASYNC DETECTION: Run detection in background to prevent blocking
+        # Detection runs on separate thread and caches results
+        self.detection_thread: Optional[threading.Thread] = None
+        self.detection_stop = False
+        self.pending_detection_frame: Optional[cv2.Mat] = None
+        self.pending_frame_lock = threading.Lock()
+        self.last_detection_results = []
+        self.detection_results_lock = threading.Lock()
+        
         # Cache recent detections for web overlay (no latency)
         self.last_detections = []
         self.overlay_detection_frame_skip = 0  # Counter for detection sampling
@@ -205,11 +214,19 @@ class TrackingEngine:
         
         self.running = True
         self.paused = False
+        self.detection_stop = False
         self.last_movement_time = time.time()  # Initialize inactivity timer
+        
+        # Start main tracking thread
         self.thread = threading.Thread(target=self._tracking_loop, daemon=True)
         self.thread.start()
         
-        logger.info("✓ Tracking engine started")
+        # ⭐ Start async detection thread (runs on separate CPU core)
+        # Prevents YOLOv8 detection from blocking frame processing
+        self.detection_thread = threading.Thread(target=self._detection_worker, daemon=True)
+        self.detection_thread.start()
+        
+        logger.info("✓ Tracking engine started (with async detection)")
     
     def stop(self) -> None:
         """Stop automated tracking"""
@@ -219,9 +236,13 @@ class TrackingEngine:
         logger.info("Stopping tracking engine...")
         
         self.running = False
+        self.detection_stop = True
         
         if self.thread and self.thread.is_alive():
             self.thread.join(timeout=5.0)
+        
+        if self.detection_thread and self.detection_thread.is_alive():
+            self.detection_thread.join(timeout=5.0)
         
         # Close any active events
         for event in self.active_events.values():
@@ -271,6 +292,52 @@ class TrackingEngine:
                 time.sleep(0.1)
         
         logger.info("Exiting tracking loop")
+    
+    def _detection_worker(self) -> None:
+        """
+        ⭐ ASYNC DETECTION THREAD
+        
+        Runs continuously in background, performing expensive YOLOv8 detection
+        on frames submitted by main tracking loop. This prevents detection from
+        blocking frame processing and video streaming.
+        
+        Main loop: Acquire pending frame → Run detection → Cache results → Ready
+        """
+        logger.info("Detection worker started")
+        
+        while not self.detection_stop:
+            try:
+                # Check if there's a frame waiting for detection
+                with self.pending_frame_lock:
+                    if self.pending_detection_frame is None:
+                        # No frame waiting, wait a bit before checking again
+                        time.sleep(0.001)
+                        continue
+                    
+                    # Get the frame
+                    detection_frame = self.pending_detection_frame.copy()
+                    self.pending_detection_frame = None  # Mark frame as consumed
+                
+                # ⭐ RUN EXPENSIVE DETECTION (this takes 50-100ms)
+                # But it runs on SEPARATE THREAD, so main loop doesn't block
+                detections = self.detector.detect(detection_frame)
+                
+                # Filter by target classes and confidence
+                detections = [
+                    d for d in detections
+                    if d.class_name in self.config.target_classes
+                    and d.confidence >= self.config.min_confidence
+                ]
+                
+                # Cache results for main loop to use
+                with self.detection_results_lock:
+                    self.last_detection_results = detections
+                    
+            except Exception as e:
+                logger.error(f"Error in detection worker: {e}")
+                time.sleep(0.1)
+        
+        logger.info("Detection worker stopped")
     
     def _assign_object_ids(self, detections: List[DetectionResult]) -> List[tuple[int, DetectionResult]]:
         """
@@ -346,46 +413,32 @@ class TrackingEngine:
         """
         current_time = time.time()
         
-        # ⭐ OPTIMIZATION: Downsample frame for detection to save CPU
-        # Detection is CPU-intensive, so we scale down the frame
-        # Tracking coordinates are scaled back up automatically
+        # ⭐ OPTIMIZATION: Frame skipping for detection
+        # Submit frame to async detection worker every 3rd frame
+        # Main loop does NOT wait for detection - just submits and continues
+        detection_skip_interval = 3  # Submit to detection every Nth frame
+        
         frame_height, frame_width = frame.shape[:2]
         
-        # Scale factor: if frame is > 1280px wide, downsample
-        if frame_width > 1280:
-            scale_factor = 1280 / frame_width
-            detection_frame = cv2.resize(frame, (int(frame_width * scale_factor), int(frame_height * scale_factor)), interpolation=cv2.INTER_LINEAR)
-        else:
-            scale_factor = 1.0
-            detection_frame = frame
+        # Only submit detection frames every Nth frame
+        if self.frame_count % detection_skip_interval == 0:
+            # ⭐ OPTIMIZATION: Downsample frame for detection to save CPU
+            if frame_width > 1280:
+                scale_factor = 1280 / frame_width
+                detection_frame = cv2.resize(frame, (int(frame_width * scale_factor), int(frame_height * scale_factor)), interpolation=cv2.INTER_LINEAR)
+            else:
+                detection_frame = frame
+            
+            # ⭐ Submit frame to async detection worker (NON-BLOCKING)
+            # Detection runs on separate thread, main loop continues immediately
+            with self.pending_frame_lock:
+                self.pending_detection_frame = detection_frame.copy()
         
-        # Step 1: Detect objects (on downsampled frame for speed)
-        detections = self.detector.detect(detection_frame, frame_number=self.frame_count)
+        # Use latest cached detection results (from detection worker)
+        with self.detection_results_lock:
+            detections = self.last_detection_results.copy() if self.last_detection_results else []
         
-        # ⭐ Scale detection bboxes back to original frame coordinates
-        if scale_factor != 1.0:
-            for detection in detections:
-                # bbox: (x1, y1, x2, y2)
-                x1, y1, x2, y2 = detection.bbox
-                detection.bbox = (
-                    int(x1 / scale_factor),
-                    int(y1 / scale_factor),
-                    int(x2 / scale_factor),
-                    int(y2 / scale_factor)
-                )
-                # Also scale center
-                cx, cy = detection.center
-                detection.center = (int(cx / scale_factor), int(cy / scale_factor))
-        
-        # Filter by target classes and confidence
-        detections = [
-            d for d in detections
-            if d.class_name in self.config.target_classes
-            and d.confidence >= self.config.min_confidence
-        ]
-        
-        # ⭐ Cache detections for web overlay (they're computed anyway for tracking)
-        # No extra CPU cost - just storing the reference to already-detected objects
+        # ⭐ Cache detections for web overlay
         self.last_detections = detections
         
         self.detection_count += len(detections)
