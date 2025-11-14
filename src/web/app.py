@@ -19,6 +19,7 @@ from typing import Optional, List, Dict, Any
 import cv2
 import asyncio
 import json
+import threading
 from datetime import datetime
 from pathlib import Path
 import logging
@@ -664,16 +665,45 @@ async def video_stream(detections: bool = False):
 
 
 # ============================================================================
-# WebSocket Binary Stream (Ultra-Low Latency Alternative to MJPEG)
+# WebSocket Binary Stream (Ultra-Low Latency - Direct RTSP)
 # ============================================================================
+
+# Direct RTSP capture for minimal latency (bypasses shared queue)
+_direct_rtsp_capture = None
+_direct_rtsp_lock = threading.Lock()
+
+def get_direct_rtsp_stream():
+    """Get or create a direct RTSP capture (low-latency path)"""
+    global _direct_rtsp_capture
+    
+    if _direct_rtsp_capture is None:
+        try:
+            # Get RTSP URL from config or environment
+            import os
+            rtsp_url = os.getenv('RTSP_URL') or 'rtsp://admin:Windows98@192.168.1.107:554/11'
+            
+            if rtsp_url:
+                cap = cv2.VideoCapture(rtsp_url)
+                cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+                cap.set(cv2.CAP_PROP_FPS, 30)
+                
+                if cap.isOpened():
+                    _direct_rtsp_capture = cap
+                else:
+                    logger.warning("Failed to open direct RTSP stream")
+                    cap.release()
+        except Exception as e:
+            logger.error(f"Error creating direct RTSP stream: {e}")
+    
+    return _direct_rtsp_capture
 
 @app.websocket("/ws/video")
 async def websocket_video_stream(websocket: WebSocket):
     """
     WebSocket binary video stream - ULTRA-LOW LATENCY PATH
     
+    Uses DIRECT RTSP capture (bypasses shared queue)
     Sends raw JPEG frames as binary data over WebSocket
-    Eliminates MJPEG parsing overhead (40-60ms)
     Result: 15-20ms latency (matches camera admin interface)
     
     Protocol:
@@ -682,25 +712,36 @@ async def websocket_video_stream(websocket: WebSocket):
     - Repeats for each frame
     """
     await websocket.accept()
+    cap = get_direct_rtsp_stream()
+    
+    if cap is None:
+        logger.error("Direct RTSP stream not available")
+        await websocket.close()
+        return
     
     try:
         while True:
-            if not stream_handler or stream_handler.stopped:
-                await asyncio.sleep(0.01)
-                continue
-            
-            # Get latest frame (skip buffered)
-            frame = stream_handler.read_latest()
-            
-            if frame is None:
-                await asyncio.sleep(0.001)  # Brief wait for next frame
-                continue
-            
-            # Encode as JPEG
-            ret, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 20])
+            # Read directly from camera (bypass queue)
+            ret, frame = cap.read()
             
             if not ret:
-                logger.warning("Failed to encode frame")
+                # Reconnect
+                cap.release()
+                cap = None
+                cap = get_direct_rtsp_stream()
+                await asyncio.sleep(0.1)
+                continue
+            
+            # CRITICAL: Skip stale frames to get latest
+            for _ in range(2):
+                ret2, frame2 = cap.read()
+                if ret2:
+                    frame = frame2
+            
+            # Encode as JPEG (ultra-low quality for speed)
+            ret, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 15])
+            
+            if not ret:
                 continue
             
             frame_bytes = buffer.tobytes()
@@ -711,13 +752,16 @@ async def websocket_video_stream(websocket: WebSocket):
             try:
                 await websocket.send_bytes(frame_size + frame_bytes)
             except Exception as e:
-                logger.warning(f"WebSocket send error: {e}")
+                logger.debug(f"WebSocket send error: {e}")
                 break
                 
     except WebSocketDisconnect:
         logger.info("WebSocket video client disconnected")
     except Exception as e:
         logger.error(f"WebSocket video error: {e}")
+    finally:
+        if cap:
+            cap.release()
 
 
 # ============================================================================
