@@ -108,18 +108,30 @@ class ObjectDetector:
         self.model_path = model_path
         self.confidence_threshold = confidence_threshold
         self.target_classes = target_classes or self.DEFAULT_TARGET_CLASSES
-        self.device = device
+        
+        # Handle DirectML device for AMD GPUs
+        if device == 'dml' or device == 'directml':
+            try:
+                import torch_directml
+                dml_device = torch_directml.device()
+                self.device = str(dml_device)  # Convert to string for YOLO
+                logger.info(f"Using DirectML (AMD GPU acceleration): {self.device}")
+            except ImportError:
+                logger.warning("DirectML not available, falling back to CPU")
+                self.device = 'cpu'
+        else:
+            self.device = device
         
         logger.info(f"Loading YOLO model from {model_path}...")
         
         try:
             self.model = YOLO(model_path)
-            self.model.to(device)
+            self.model.to(self.device)  # Use self.device (not the parameter)
             
             # Get class names from model
             self.class_names = self.model.names
             
-            logger.info(f"✓ Model loaded successfully on {device}")
+            logger.info(f"✓ Model loaded successfully on {self.device}")
             logger.info(f"  Target classes: {', '.join(self.target_classes)}")
             logger.info(f"  Confidence threshold: {confidence_threshold}")
             

@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Security Camera AI Tracker - Dashboard</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <link rel="icon" type="image/x-icon" href="/static/images/favicon.ico">
+</head>
+<body>
+    <!-- Header -->
+    <header class="dashboard-header">
+        <div class="container">
+            <h1>
+                <span class="icon">🎥</span>
+                Security Camera AI Tracker
+            </h1>
+            <div class="status-indicator">
+                <span id="connection-status" class="status-dot offline"></span>
+                <span id="connection-text">Connecting...</span>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Dashboard -->
+    <main class="dashboard-main">
+        <div class="container">
+            
+            <!-- Top Stats Row -->
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-icon">👁️</div>
+                    <div class="stat-content">
+                        <div class="stat-label">Total Detections</div>
+                        <div class="stat-value" id="stat-detections">0</div>
+                    </div>
+                </div>
+                
+                <div class="stat-card">
+                    <div class="stat-icon">🎯</div>
+                    <div class="stat-content">
+                        <div class="stat-label">Active Tracks</div>
+                        <div class="stat-value" id="stat-tracks">0</div>
+                    </div>
+                </div>
+                
+                <div class="stat-card">
+                    <div class="stat-icon">📊</div>
+                    <div class="stat-content">
+                        <div class="stat-label">Events</div>
+                        <div class="stat-value" id="stat-events">0</div>
+                    </div>
+                </div>
+                
+                <div class="stat-card">
+                    <div class="stat-icon">⚡</div>
+                    <div class="stat-content">
+                        <div class="stat-label">FPS</div>
+                        <div class="stat-value" id="stat-fps">0</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Video and Controls Row -->
+            <div class="main-grid">
+                
+                <!-- Left: Video Feed -->
+                <div class="video-section">
+                    <div class="section-card">
+                        <div class="section-header">
+                            <h2>Live Camera Feed</h2>
+                            <div class="video-controls">
+                                <button id="btn-fullscreen" class="btn-icon" title="Fullscreen">
+                                    <span>⛶</span>
+                                </button>
+                            </div>
+                        </div>
+                        <div class="video-container" id="video-container">
+                            <img id="video-stream" 
+                                 src="/api/video/stream" 
+                                 alt="Camera Stream"
+                                 onerror="handleVideoError()">
+                            <div class="video-overlay" id="video-overlay">
+                                <div class="loading-spinner"></div>
+                                <p>Loading camera feed...</p>
+                            </div>
+                        </div>
+                        <div class="video-info">
+                            <div>
+                                <strong>Camera:</strong> <span id="camera-name">Loading...</span>
+                            </div>
+                            <div>
+                                <strong>Resolution:</strong> <span id="camera-resolution">--</span>
+                            </div>
+                            <div>
+                                <strong>Stream FPS:</strong> <span id="stream-fps">--</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Right: Control Panel -->
+                <div class="controls-section">
+                    
+                    <!-- Tracking Controls -->
+                    <div class="section-card">
+                        <div class="section-header">
+                            <h2>Tracking Control</h2>
+                        </div>
+                        <div class="control-group">
+                            <button id="btn-start-tracking" class="btn btn-primary btn-block">
+                                ▶️ Start Tracking
+                            </button>
+                            <button id="btn-stop-tracking" class="btn btn-secondary btn-block" disabled>
+                                ⏸️ Stop Tracking
+                            </button>
+                        </div>
+                        <div class="tracking-status">
+                            <div class="status-row">
+                                <span>Status:</span>
+                                <span id="tracking-status" class="badge badge-inactive">Inactive</span>
+                            </div>
+                            <div class="status-row">
+                                <span>Uptime:</span>
+                                <span id="tracking-uptime">00:00:00</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- PTZ Controls -->
+                    <div class="section-card">
+                        <div class="section-header">
+                            <h2>PTZ Camera Control</h2>
+                        </div>
+                        
+                        <!-- Directional Pad -->
+                        <div class="ptz-dpad">
+                            <button class="dpad-btn dpad-up" data-pan="0" data-tilt="0.5">▲</button>
+                            <button class="dpad-btn dpad-left" data-pan="-0.5" data-tilt="0">◄</button>
+                            <button class="dpad-btn dpad-center">●</button>
+                            <button class="dpad-btn dpad-right" data-pan="0.5" data-tilt="0">►</button>
+                            <button class="dpad-btn dpad-down" data-pan="0" data-tilt="-0.5">▼</button>
+                        </div>
+
+                        <!-- Presets -->
+                        <div class="control-group">
+                            <label>Camera Presets:</label>
+                            <select id="preset-select" class="form-select">
+                                <option value="">Loading presets...</option>
+                            </select>
+                            <button id="btn-goto-preset" class="btn btn-secondary btn-block">
+                                Go to Preset
+                            </button>
+                        </div>
+
+                        <!-- Speed Control -->
+                        <div class="control-group">
+                            <label>Movement Speed:</label>
+                            <input type="range" id="ptz-speed" min="0.1" max="1.0" step="0.1" value="0.5" class="slider">
+                            <div class="slider-value">
+                                <span id="speed-value">0.5</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- System Info -->
+                    <div class="section-card">
+                        <div class="section-header">
+                            <h2>System Status</h2>
+                        </div>
+                        <div class="system-info">
+                            <div class="info-row">
+                                <span class="info-label">Stream:</span>
+                                <span id="status-stream" class="badge badge-inactive">Unknown</span>
+                            </div>
+                            <div class="info-row">
+                                <span class="info-label">Detector:</span>
+                                <span id="status-detector" class="badge badge-inactive">Unknown</span>
+                            </div>
+                            <div class="info-row">
+                                <span class="info-label">PTZ:</span>
+                                <span id="status-ptz" class="badge badge-inactive">Unknown</span>
+                            </div>
+                            <div class="info-row">
+                                <span class="info-label">Frames Received:</span>
+                                <span id="frames-received">0</span>
+                            </div>
+                            <div class="info-row">
+                                <span class="info-label">Frames Dropped:</span>
+                                <span id="frames-dropped">0</span>
+                            </div>
+                        </div>
+                    </div>
+
+                </div>
+            </div>
+
+            <!-- Events Log -->
+            <div class="events-section">
+                <div class="section-card">
+                    <div class="section-header">
+                        <h2>Recent Events</h2>
+                        <button id="btn-clear-events" class="btn btn-sm">Clear</button>
+                    </div>
+                    <div class="events-container" id="events-container">
+                        <div class="no-events">No events yet. Start tracking to see detections.</div>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+    </main>
+
+    <!-- Footer -->
+    <footer class="dashboard-footer">
+        <div class="container">
+            <p>&copy; 2025 Security Camera AI Tracker | Built with FastAPI + YOLOv8</p>
+        </div>
+    </footer>
+
+    <!-- Scripts -->
+    <script src="/static/js/dashboard.js"></script>
+</body>
+</html>
