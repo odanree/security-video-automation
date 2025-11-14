@@ -205,10 +205,11 @@ body {
 .video-container {
     position: relative;
     width: 100%;
-    padding-bottom: 75%; /* 4:3 aspect ratio (640x480) */
     background-color: #000;
     overflow: hidden;
-    max-height: 70vh; /* Take up to 70% of viewport height */
+    max-width: 100%;
+    max-height: 55vh; /* Limit height to leave room for PTZ controls */
+    aspect-ratio: 640 / 480; /* 4:3 aspect ratio */
 }
 
 #video-stream,
