@@ -22,7 +22,7 @@ cameras:
       http_url: "http://192.168.1.107:8080/video"
       
       # Stream settings
-      resolution: [480, 360]  # Ultra-low resolution for minimal bandwidth and latency
+      resolution: [640, 480]  # Reasonable resolution (fits UI without pushing controls off)
       fps: 30  # 30 FPS target - faster frame delivery reduces latency
       buffer_size: 1  # Ultra-minimal buffer (only 1 frame) for instant latency
       
