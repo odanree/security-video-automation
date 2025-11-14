@@ -584,12 +584,28 @@ class CameraTrackerApp(QMainWindow):
         
         pixmap = QPixmap.fromImage(qt_image)
         
-        # Scale pixmap to fit label while maintaining aspect ratio
-        # Get label's current size
+        # IMPORTANT: Draw overlay AFTER scaling for correct coordinate mapping
+        # We need to know the final display scale before drawing boxes
         label_width = self.video_label.width()
         label_height = self.video_label.height()
         
         if label_width > 0 and label_height > 0:
+            # Calculate scale factor from original to display size
+            pixmap_width = pixmap.width()
+            pixmap_height = pixmap.height()
+            
+            # Determine final scale (same logic as below)
+            if pixmap_width > label_width or pixmap_height > label_height:
+                # Need to scale down
+                if pixmap_width / label_width > pixmap_height / label_height:
+                    # Scale by width
+                    final_scale = label_width / pixmap_width
+                else:
+                    # Scale by height
+                    final_scale = label_height / pixmap_height
+            else:
+                final_scale = 1.0
+            
             # Scale pixmap to fit within label while keeping aspect ratio
             scaled_pixmap = pixmap.scaledToWidth(label_width, Qt.SmoothTransformation) if pixmap.width() > 0 else pixmap
             
@@ -603,52 +619,115 @@ class CameraTrackerApp(QMainWindow):
             self.video_label.setPixmap(pixmap)
     
     def draw_detections_overlay(self, frame: np.ndarray) -> np.ndarray:
-        """Draw detection boxes on frame (uses cached detections to avoid HTTP overhead)"""
+        """Draw detection boxes on frame (uses cached detections to avoid HTTP overhead).
+        
+        Important: Detections are drawn on the ORIGINAL frame (2560×1920) in the EXACT
+        coordinates where they will appear. The frame is then displayed with aspect-ratio
+        preservation, so boxes are always correctly positioned.
+        """
         current_time = time.time()
         
         # Optimization: Only fetch detections every 1 second instead of 500ms
-        # (reduced from 0.5s to 1.0s - detection overlay doesn't need to be super real-time)
         if current_time - self.last_detection_fetch > self.detection_fetch_interval:
             try:
                 # Non-blocking request with very short timeout
                 response = requests.get(f"{self.backend_url}/api/detections/current", timeout=0.05)
                 if response.status_code == 200:
-                    self.cached_detections = response.json()
+                    data = response.json()
+                    self.cached_detections = data if isinstance(data, list) else []
+                    # Debug: Log detection fetch
+                    if self.cached_detections:
+                        print(f"[DETECTIONS] Fetched {len(self.cached_detections)} detections for overlay")
                 self.last_detection_fetch = current_time
-            except:
+            except Exception as e:
+                print(f"[ERROR] Detection fetch failed: {e}")
                 pass  # Keep using old cached detections
         
         # Get current frame dimensions
         frame_height, frame_width = frame.shape[:2]
         
         # Desktop shows /11 (2560×1920), backend detects on /12 (800×600)
-        # Need to scale UP coordinates from backend to desktop
+        # Scale coordinates UP from backend to display frame
         BACKEND_WIDTH, BACKEND_HEIGHT = 800, 600
-        scale_x = frame_width / BACKEND_WIDTH  # 3.2 (scale up!)
-        scale_y = frame_height / BACKEND_HEIGHT  # 3.2 (scale up!)
+        scale_x = frame_width / BACKEND_WIDTH   # 2560/800 = 3.2
+        scale_y = frame_height / BACKEND_HEIGHT  # 1920/600 = 3.2
         
-        # Draw cached detections with upscaling
-        # Optimization: Cache the scale factors to avoid recalculating
+        # Color mapping for different classes
+        colors = {
+            'person': (0, 255, 0),      # Green
+            'bicycle': (255, 165, 0),   # Orange
+            'car': (0, 165, 255),       # Blue (BGR: Red=0, Green=165, Blue=255)
+            'motorcycle': (255, 0, 255), # Magenta
+            'truck': (255, 255, 0)      # Cyan
+        }
+        
+        # Draw cached detections with proper scaling
+        detections_drawn = 0
+        if self.cached_detections:
+            print(f"[DRAW] Drawing {len(self.cached_detections)} detection(s) on overlay")
+        
         for det in self.cached_detections:
-            x1, y1, x2, y2 = det['bbox']
-            label = det['class']
-            confidence = det['confidence']
-            
-            # Scale UP from 800×600 to 2560×1920
-            x1 = int(x1 * scale_x)
-            x2 = int(x2 * scale_x)
-            y1 = int(y1 * scale_y)
-            y2 = int(y2 * scale_y)
-            
-            # Draw box with scaled coordinates
-            cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
-            
-            # Draw label with background
-            text = f"{label} {confidence:.2f}"
-            (text_width, text_height), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 2)
-            cv2.rectangle(frame, (x1, y1 - text_height - 10), (x1 + text_width, y1), (0, 255, 0), -1)
-            cv2.putText(frame, text, (x1, y1 - 5), 
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 2)
+            try:
+                x1, y1, x2, y2 = det['bbox']
+                class_name = det['class']
+                confidence = det['confidence']
+                
+                # Scale UP from backend (800×600) to display frame (2560×1920)
+                x1 = int(x1 * scale_x)
+                x2 = int(x2 * scale_x)
+                y1 = int(y1 * scale_y)
+                y2 = int(y2 * scale_y)
+                
+                # Ensure coordinates are in bounds
+                x1 = max(0, min(x1, frame_width - 1))
+                x2 = max(x1 + 1, min(x2, frame_width))
+                y1 = max(0, min(y1, frame_height - 1))
+                y2 = max(y1 + 1, min(y2, frame_height))
+                
+                if x2 <= x1 or y2 <= y1:
+                    print(f"[SKIP] Invalid box: ({x1},{y1}) to ({x2},{y2})")
+                    continue
+                
+                # Get color for this class
+                color = colors.get(class_name, (0, 255, 0))  # Default to green
+                
+                # Draw bounding box rectangle with thickness 2
+                cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
+                
+                # Draw label text with semi-transparent background
+                text = f"{class_name} {confidence:.2f}"
+                font = cv2.FONT_HERSHEY_SIMPLEX
+                font_scale = 0.5
+                font_thickness = 2
+                
+                # Get text size for background
+                (text_width, text_height), baseline = cv2.getTextSize(text, font, font_scale, font_thickness)
+                
+                # Place label above box
+                label_x = x1
+                label_y = max(25, y1 - 5)  # At least 25px from top
+                
+                # Draw semi-transparent background for label
+                overlay = frame.copy()
+                cv2.rectangle(overlay,
+                            (label_x, label_y - text_height - 10),
+                            (label_x + text_width + 5, label_y),
+                            color, -1)
+                cv2.addWeighted(overlay, 0.7, frame, 0.3, 0, frame)
+                
+                # Draw white text on top
+                cv2.putText(frame, text,
+                          (label_x + 2, label_y - 5),
+                          font, font_scale, (255, 255, 255), font_thickness)
+                
+                detections_drawn += 1
+                
+            except (KeyError, TypeError, ValueError, IndexError) as e:
+                print(f"[ERROR] Could not draw detection {det}: {e}")
+                continue
+        
+        if detections_drawn > 0:
+            print(f"[SUCCESS] Drew {detections_drawn} detection box(es)")
         
         return frame
     
