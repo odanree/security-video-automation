@@ -312,8 +312,8 @@ class ObjectDetector:
         for detection in detections:
             x1, y1, x2, y2 = detection.bbox
             
-            # Draw bounding box
-            cv2.rectangle(annotated_frame, (x1, y1), (x2, y2), color, thickness)
+            # Draw bounding box with thicker line for visibility
+            cv2.rectangle(annotated_frame, (x1, y1), (x2, y2), color, thickness + 1)
             
             # Build label text
             label_parts = [detection.class_name]
@@ -326,28 +326,47 @@ class ObjectDetector:
             
             label = " ".join(label_parts)
             
-            # Draw label background
-            (label_width, label_height), _ = cv2.getTextSize(
-                label, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2
+            # Get text size with larger font
+            font_scale = 0.85  # Increased from 0.6
+            thickness_text = 2  # Thicker text
+            (label_width, label_height), baseline = cv2.getTextSize(
+                label, cv2.FONT_HERSHEY_SIMPLEX, font_scale, thickness_text
             )
             
+            # Add padding around label
+            padding = 8
+            label_bg_x1 = x1
+            label_bg_y1 = y1 - label_height - padding * 2
+            label_bg_x2 = x1 + label_width + padding * 2
+            label_bg_y2 = y1
+            
+            # Draw white background for label (for better contrast)
             cv2.rectangle(
                 annotated_frame,
-                (x1, y1 - label_height - 10),
-                (x1 + label_width, y1),
-                color,
+                (label_bg_x1, label_bg_y1),
+                (label_bg_x2, label_bg_y2),
+                (255, 255, 255),  # White background
                 -1
             )
             
-            # Draw label text
+            # Draw black border around label
+            cv2.rectangle(
+                annotated_frame,
+                (label_bg_x1, label_bg_y1),
+                (label_bg_x2, label_bg_y2),
+                (0, 0, 0),  # Black border
+                2
+            )
+            
+            # Draw label text in black on white background
             cv2.putText(
                 annotated_frame,
                 label,
-                (x1, y1 - 5),
+                (x1 + padding, y1 - padding),
                 cv2.FONT_HERSHEY_SIMPLEX,
-                0.6,
-                (255, 255, 255),
-                2
+                font_scale,
+                (0, 0, 0),  # Black text
+                thickness_text
             )
             
             # Draw center point
