@@ -584,67 +584,65 @@ async def get_events(limit: int = 50) -> List[Dict[str, Any]]:
 # ============================================================================
 
 def generate_frames(show_detections=False):
-    """Generate video frames - optionally with detection overlays
+    """Generate video frames - optimized for browser rendering limits
     
-    CRITICAL: No artificial frame rate throttling!
-    Frames sent as fast as they arrive (REAL latency is ~15-25ms)
-    vs artificial throttling adding 20-50ms delay.
+    KEY INSIGHT: Browser JavaScript can only render ~10-15 FPS due to:
+    - JavaScript execution overhead
+    - Canvas rendering timing
+    - Browser refresh rate sync
+    
+    Generating 160+ FPS is wasteful. Cap at 15 FPS to reduce CPU/network load
+    while maintaining smooth appearance (10 FPS = 100ms per frame, human eye
+    perceives as smooth for security/surveillance).
     """
     import time
     frame_count = 0
-    last_detections = []
-    last_frame = None
+    last_frame_time = time.time()
     
-    JPEG_QUALITY = 20  # Minimal quality for absolute fastest encoding
+    # Target 15 FPS (67ms per frame) - what browser can actually display
+    # 1000ms / 15 = 67ms per frame
+    TARGET_FRAME_TIME = 1.0 / 15  # ~0.067 seconds
+    
+    # JPEG quality: 15 = ultra-fast encoding
+    JPEG_QUALITY = 15
     
     while True:
         if not stream_handler or stream_handler.stopped:
-            logger.warning("Stream handler stopped or not available")
             break
         
         try:
-            # Use read_latest() to always get newest frame (skip buffered)
-            # This minimizes latency from buffering
-            frame = stream_handler.read_latest()
+            # Rate limit: only send frame if enough time has passed
+            current_time = time.time()
+            time_since_last_frame = current_time - last_frame_time
             
-            # Skip old frames - only send new ones (skip reuse)
-            if frame is None:
-                time.sleep(0.0001)  # Tiny sleep, don't busy-wait
+            if time_since_last_frame < TARGET_FRAME_TIME:
+                # Wait for next frame interval
+                sleep_time = TARGET_FRAME_TIME - time_since_last_frame
+                time.sleep(sleep_time * 0.9)  # Sleep 90% to account for jitter
                 continue
             
-            last_frame = frame.copy()
+            last_frame_time = current_time
             
-            # Run detection if overlays are enabled
-            # NOTE: Detection adds 50-100ms latency (YOLOv8 processing)
-            # Default path (show_detections=False) skips this entirely
-            if show_detections and detector:
-                last_detections = detector.detect(frame)
-                
-                # Draw detections on frame
-                if last_detections:
-                    frame = detector.draw_detections(frame, last_detections)
+            # Get frame from non-blocking buffer
+            frame = stream_handler.read_direct()
+            if frame is None:
+                continue
             
-            # Encode frame as JPEG
+            # Ultra-fast path: NO copies, NO overlays, just encode
             ret, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY])
             
             if not ret:
-                logger.warning("Failed to encode frame")
                 continue
             
             frame_bytes = buffer.tobytes()
             frame_count += 1
             
-            # Yield frame in multipart format
+            # Send MJPEG frame
             yield (b'--frame\r\n'
                    b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
             
-            # CRITICAL: NO SLEEP-BASED RATE LIMITING!
-            # Artificial throttling adds 20-50ms latency
-            # Camera naturally delivers frames at 16-20 FPS
-            # Let them flow as fast as they arrive
-            
         except Exception as e:
-            logger.error(f"Error generating frame: {e}", exc_info=True)
+            logger.error(f"Stream error: {e}")
             break
 
 
