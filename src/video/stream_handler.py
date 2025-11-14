@@ -149,6 +149,17 @@ class VideoStreamHandler:
                 logger.error(f"Failed to open stream: {self.stream_url}")
                 return False
             
+            # CRITICAL: Disable ALL OpenCV buffering for ultra-low-latency streaming
+            self.capture.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # Minimal buffer
+            
+            # Force lowest latency settings
+            self.capture.set(cv2.CAP_PROP_FPS, 20)  # Target FPS
+            self.capture.set(cv2.CAP_PROP_FRAME_WIDTH, 480)  # Low res
+            self.capture.set(cv2.CAP_PROP_FRAME_HEIGHT, 360)
+            
+            # RTSP-specific low-latency settings
+            self.capture.set(cv2.CAP_PROP_AUTOFOCUS, 0)  # Disable autofocus (causes delays)
+            
             # Get stream properties
             width = int(self.capture.get(cv2.CAP_PROP_FRAME_WIDTH))
             height = int(self.capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
@@ -216,7 +227,12 @@ class VideoStreamHandler:
             
             # Read frame
             try:
-                ret, frame = self.capture.read()
+                # OPTIMIZATION: Skip stale frames in the buffer
+                # Read and discard up to 2 frames to get the latest one (minimal latency)
+                for _ in range(2):
+                    ret, frame = self.capture.read()
+                    if not ret:
+                        break
                 
                 if not ret:
                     logger.warning(f"Failed to read frame from '{self.name}'")
