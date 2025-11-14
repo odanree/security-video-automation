@@ -27,7 +27,7 @@ import logging
 # Import our tracking components
 from src.video.stream_handler import VideoStreamHandler
 from src.ai.object_detector import ObjectDetector
-from src.ai.motion_tracker import MultiObjectTracker
+from src.ai.motion_tracker import MotionTracker
 from src.automation.tracking_engine import TrackingEngine
 from src.camera.ptz_controller import PTZController
 from src.utils.config_loader import ConfigLoader
@@ -61,7 +61,7 @@ templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 config_loader: Optional[ConfigLoader] = None
 stream_handler: Optional[VideoStreamHandler] = None
 detector: Optional[ObjectDetector] = None
-tracker: Optional[MultiObjectTracker] = None
+tracker: Optional[MotionTracker] = None
 tracking_engine: Optional[TrackingEngine] = None
 ptz_controller: Optional[PTZController] = None
 
@@ -98,10 +98,13 @@ async def startup_event():
             device=ai_config.get_device()
         )
         
-        # Initialize tracker
-        tracker = MultiObjectTracker(
-            max_distance=100.0,
-            max_age=30
+        # Initialize tracker (TrackingEngine needs MotionTracker, not MultiObjectTracker)
+        from src.ai.motion_tracker import MotionTracker
+        tracker = MotionTracker(
+            history_length=30,
+            movement_threshold=50,
+            stationary_threshold=20,
+            inactive_timeout=2.0
         )
         
         # Initialize PTZ controller
@@ -115,37 +118,16 @@ async def startup_event():
         # Initialize tracking engine
         from src.automation.tracking_engine import TrackingConfig, TrackingZone
         
-        # Create default tracking config
-        tracking_cfg = TrackingConfig(
-            zones=[
-                TrackingZone(
-                    name="zone_left",
-                    x_range=(0.0, 0.33),
-                    y_range=(0.0, 1.0),
-                    preset_token="1",
-                    priority=2
-                ),
-                TrackingZone(
-                    name="zone_center",
-                    x_range=(0.33, 0.66),
-                    y_range=(0.0, 1.0),
-                    preset_token="2",
-                    priority=1
-                ),
-                TrackingZone(
-                    name="zone_right",
-                    x_range=(0.66, 1.0),
-                    y_range=(0.0, 1.0),
-                    preset_token="3",
-                    priority=2
-                ),
-            ],
-            target_classes=['person'],
-            min_confidence=0.6,
-            movement_threshold=100,
-            cooldown_time=2.0,
-            max_tracking_age=3.0
-        )
+        # Load tracking config from YAML instead of hardcoding
+        tracking_cfg = config_loader.build_tracking_engine_config()
+        
+        logger.info(f"✓ Tracking config loaded:")
+        logger.info(f"  - Target classes: {tracking_cfg.target_classes}")
+        logger.info(f"  - Direction triggers: {[d.value for d in tracking_cfg.direction_triggers]}")
+        logger.info(f"  - Zones: {len(tracking_cfg.zones)}")
+        logger.info(f"  - Confidence threshold: {tracking_cfg.min_confidence}")
+        logger.info(f"  - Movement threshold: {tracking_cfg.movement_threshold}")
+        logger.info(f"  - Cooldown time: {tracking_cfg.cooldown_time}")
         
         # Initialize tracking engine
         tracking_engine = TrackingEngine(

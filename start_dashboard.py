@@ -21,9 +21,9 @@ def main():
         print("Install dependencies: pip install fastapi uvicorn jinja2 websockets")
         sys.exit(1)
     
-    print("🚀 Starting Security Camera AI Dashboard...")
-    print("📹 Camera controls and live monitoring")
-    print("🌐 Access at: http://localhost:8000")
+    print("[START] Starting Security Camera AI Dashboard...")
+    print("[VIDEO] Camera controls and live monitoring")
+    print("[WEB] Access at: http://localhost:8000")
     print("Press Ctrl+C to stop\n")
     
     # Start server

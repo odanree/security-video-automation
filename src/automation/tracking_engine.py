@@ -159,9 +159,19 @@ class TrackingEngine:
         # Tracking state
         self.current_preset: Optional[str] = None
         self.last_ptz_time: float = 0.0
+        self.last_movement_time: float = 0.0  # Track inactivity for home return
+        self.home_preset: str = "Preset002"  # Return to center/home when inactive
+        self.inactivity_timeout: float = 5.0  # Seconds before returning home
         self.active_events: Dict[str, TrackingEvent] = {}
         self.completed_events: List[TrackingEvent] = []
         self.event_counter = 0
+        
+        # Centroid-based object tracking (to assign stable IDs)
+        self.next_object_id = 0
+        self.object_centroids: Dict[int, tuple[int, int]] = {}  # object_id -> (x, y)
+        self.max_centroid_distance = 50  # pixels - max distance to associate same object
+        self.centroid_max_age = 30  # frames before removing inactive track
+        self.centroid_ages: Dict[int, int] = {}  # Track age in frames
         
         # Statistics
         self.frame_count = 0
@@ -186,6 +196,7 @@ class TrackingEngine:
         
         self.running = True
         self.paused = False
+        self.last_movement_time = time.time()  # Initialize inactivity timer
         self.thread = threading.Thread(target=self._tracking_loop, daemon=True)
         self.thread.start()
         
@@ -252,6 +263,71 @@ class TrackingEngine:
         
         logger.info("Exiting tracking loop")
     
+    def _assign_object_ids(self, detections: List[DetectionResult]) -> List[tuple[int, DetectionResult]]:
+        """
+        Assign stable object IDs to detections using centroid tracking
+        
+        Uses distance-based association to match detections with existing object centroids.
+        This ensures consistent IDs across frames for the same physical object.
+        
+        Args:
+            detections: List of detected objects
+            
+        Returns:
+            List of (object_id, detection) tuples
+        """
+        import math
+        
+        if not detections:
+            # Age out old tracks
+            to_remove = [oid for oid in self.centroid_ages if self.centroid_ages[oid] > self.centroid_max_age]
+            for oid in to_remove:
+                if oid in self.object_centroids:
+                    del self.object_centroids[oid]
+                del self.centroid_ages[oid]
+            return []
+        
+        # Age all existing tracks
+        for oid in self.centroid_ages:
+            self.centroid_ages[oid] += 1
+        
+        assignments = []  # List of (object_id, detection)
+        used_ids = set()  # Track which existing IDs were matched
+        
+        # Try to match each detection to existing centroids
+        for detection in detections:
+            det_x, det_y = detection.center
+            best_id = None
+            best_dist = self.max_centroid_distance
+            
+            # Find closest centroid
+            for oid, (cx, cy) in self.object_centroids.items():
+                if oid in used_ids:  # Already matched to another detection
+                    continue
+                    
+                dist = math.sqrt((det_x - cx)**2 + (det_y - cy)**2)
+                
+                if dist < best_dist:
+                    best_dist = dist
+                    best_id = oid
+            
+            if best_id is not None:
+                # Found a matching track
+                self.object_centroids[best_id] = (det_x, det_y)
+                self.centroid_ages[best_id] = 0  # Reset age
+                used_ids.add(best_id)
+                assignments.append((best_id, detection))
+            else:
+                # Create new track
+                new_id = self.next_object_id
+                self.next_object_id += 1
+                self.object_centroids[new_id] = (det_x, det_y)
+                self.centroid_ages[new_id] = 0
+                used_ids.add(new_id)
+                assignments.append((new_id, detection))
+        
+        return assignments
+    
     def _process_frame(self, frame) -> None:
         """
         Process single frame through detection, tracking, and PTZ control pipeline
@@ -277,22 +353,28 @@ class TrackingEngine:
             self.on_detection(detections)
         
         if not detections:
+            # No detections - check if we should return to home position
+            self._check_inactivity_and_return_home(current_time)
             return
         
-        # Step 2: Update motion tracking
-        for detection in detections:
-            # Generate unique object ID
-            object_id = f"{detection.class_name}_{detection.center[0]}_{detection.center[1]}"
-            
-            # Update motion tracker
+        # Step 2: Assign stable object IDs using centroid tracking
+        tracked_detections = self._assign_object_ids(detections)
+        
+        if not tracked_detections:
+            return
+        
+        # Step 3: Update motion tracking
+        for object_id, detection in tracked_detections:
+            # Update motion tracker with stable object ID (convert to string)
+            object_id_str = str(object_id)
             direction = self.motion_tracker.update(
-                object_id=object_id,
+                object_id=object_id_str,
                 center=detection.center,
                 timestamp=current_time
             )
             
             # Get track info
-            track_info = self.motion_tracker.get_track_info(object_id)
+            track_info = self.motion_tracker.get_track_info(object_id_str)
             
             if track_info is None:
                 continue
@@ -305,6 +387,35 @@ class TrackingEngine:
             # Step 3: Check if tracking should trigger action
             if self._should_trigger_tracking(detection, direction, track_info):
                 self._handle_tracking_action(detection, direction, track_info, frame)
+                self.last_movement_time = current_time  # Update last movement time
+    
+    def _check_inactivity_and_return_home(self, current_time: float) -> None:
+        """
+        Check if camera has been inactive and return to home position
+        
+        Args:
+            current_time: Current timestamp
+        """
+        # Check if we have a home position configured
+        if not self.home_preset:
+            return
+        
+        # If no movement in the timeout period, return home
+        time_since_last_move = current_time - self.last_movement_time
+        
+        if time_since_last_move >= self.inactivity_timeout:
+            # Only go home if not already there
+            if self.current_preset != self.home_preset:
+                try:
+                    logger.info(
+                        f"No movement for {time_since_last_move:.1f}s - "
+                        f"Returning to home preset {self.home_preset}"
+                    )
+                    self.ptz.goto_preset(self.home_preset, speed=0.7)
+                    self.current_preset = self.home_preset
+                    self.last_ptz_time = current_time
+                except Exception as e:
+                    logger.error(f"Failed to return to home preset: {e}")
     
     def _should_trigger_tracking(
         self,
@@ -350,7 +461,10 @@ class TrackingEngine:
         frame
     ) -> None:
         """
-        Execute tracking action (PTZ movement)
+        Execute tracking action - Center-of-frame continuous tracking
+        
+        Uses subject's position in frame to calculate proportional pan velocity,
+        keeping the subject centered (or close to center) automatically.
         
         Args:
             detection: Detection result
@@ -358,49 +472,87 @@ class TrackingEngine:
             track_info: Tracking information
             frame: Current video frame
         """
-        # Determine which zone the subject is in
-        zone = self._get_zone_for_position(detection.center, frame.shape)
+        height, width = frame.shape[:2]
+        frame_center_x = width / 2.0
+        subject_x = detection.center[0]
         
-        if zone is None:
-            return
+        # Calculate offset from center (negative = left of center, positive = right)
+        offset_pixels = subject_x - frame_center_x
         
-        # Determine target preset based on direction and zone
-        target_preset = self._determine_target_preset(direction, zone)
+        # Calculate normalized offset (-1.0 to 1.0, where 0 = centered)
+        max_offset = width / 2.0
+        normalized_offset = offset_pixels / max_offset
         
-        if target_preset is None:
-            return
+        # Dead zone: if subject is close to center, don't pan
+        # This prevents jitter and unnecessary movement
+        DEAD_ZONE_PIXELS = 80  # If within 80 pixels of center, stop panning
+        if abs(offset_pixels) < DEAD_ZONE_PIXELS:
+            pan_velocity = 0.0
+            tracking_state = "CENTERED"
+        else:
+            # Convert normalized offset to pan velocity (-0.7 to 0.7)
+            # Use non-linear mapping: small offsets get smaller velocities
+            # This creates smooth, responsive tracking without aggressive jerking
+            max_pan_velocity = 0.7
+            
+            # Exponential smoothing for more natural tracking
+            # Closer to center = slower pan, far from center = faster pan
+            if abs(normalized_offset) < 0.3:
+                # Quadratic for smooth acceleration near center
+                pan_velocity = max_pan_velocity * (normalized_offset ** 2) * (1 if normalized_offset > 0 else -1)
+            else:
+                # Linear for consistent tracking at edges
+                pan_velocity = max_pan_velocity * normalized_offset
+            
+            # Clamp to valid range
+            pan_velocity = max(-0.7, min(0.7, pan_velocity))
+            tracking_state = "TRACKING"
         
-        # Check if already at target preset
-        if target_preset == self.current_preset:
-            return
-        
-        # Execute PTZ movement
+        # Log tracking state
         logger.info(
-            f"Tracking {detection.class_name} moving {direction.value} "
-            f"in {zone.name} → Moving to preset {target_preset}"
+            f"{detection.class_name} center tracking: offset={offset_pixels:+.0f}px "
+            f"(norm={normalized_offset:+.2f}) → pan_velocity={pan_velocity:+.2f} ({tracking_state})"
         )
         
         try:
-            self.ptz.goto_preset(target_preset, speed=0.8)
+            # Execute continuous pan movement (non-blocking, short duration)
+            # This creates smooth, centered tracking
+            self.ptz.continuous_move(
+                pan_velocity=pan_velocity,
+                tilt_velocity=0.0,
+                zoom_velocity=0.0,
+                duration=0.3,  # Short duration for responsive tracking
+                blocking=False  # Non-blocking so we process next frame immediately
+            )
             
-            self.current_preset = target_preset
             self.last_ptz_time = time.time()
             self.ptz_movement_count += 1
             
+            # Describe current state for display
+            if pan_velocity > 0:
+                direction_display = "PAN_RIGHT"
+            elif pan_velocity < 0:
+                direction_display = "PAN_LEFT"
+            else:
+                direction_display = "CENTERED"
+            
+            self.current_preset = f"{direction_display}_{tracking_state}"
+            
             if self.on_ptz_move:
-                self.on_ptz_move(target_preset)
+                self.on_ptz_move(self.current_preset)
             
             # Record event
             self._record_tracking_event(
                 object_id=track_info.object_id,
                 class_name=detection.class_name,
                 direction=direction,
-                zone=zone.name,
-                preset=target_preset
+                zone="tracking",
+                preset=self.current_preset
             )
             
         except Exception as e:
-            logger.error(f"Failed to move PTZ camera: {e}")
+            logger.error(f"Failed to execute center tracking pan: {e}")
+
     
     def _get_zone_for_position(
         self,
