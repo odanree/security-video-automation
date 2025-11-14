@@ -172,27 +172,46 @@ async def get_status() -> Dict[str, Any]:
 @app.get("/api/statistics")
 async def get_statistics() -> Dict[str, Any]:
     """Get tracking statistics"""
-    if not tracking_engine:
+    if tracking_engine:
+        stats = tracking_engine.get_statistics()
         return {
-            "frames_processed": 0,
+            "frames_processed": stats.get('frames_processed', 0),
+            "detections": stats.get('detections', 0),
+            "tracks": stats.get('tracks', 0),
+            "ptz_movements": stats.get('ptz_movements', 0),
+            "active_events": stats.get('active_events', 0),
+            "completed_events": stats.get('completed_events', 0),
+            "current_mode": stats.get('mode', 'unknown'),
+            "is_running": stats.get('is_running', False)
+        }
+    
+    # Use stream handler stats as fallback when tracking engine not running
+    if stream_handler:
+        stream_stats = stream_handler.get_stats()
+        return {
+            "frames_processed": stream_stats.frames_received,
             "detections": 0,
             "tracks": 0,
             "ptz_movements": 0,
             "active_events": 0,
             "completed_events": 0,
-            "fps": 0
+            "fps": stream_stats.fps,
+            "frames_dropped": stream_stats.frames_dropped,
+            "is_running": not stream_handler.stopped,
+            "current_mode": "streaming"
         }
     
-    stats = tracking_engine.get_statistics()
+    # Default fallback
     return {
-        "frames_processed": stats.get('frames_processed', 0),
-        "detections": stats.get('detections', 0),
-        "tracks": stats.get('tracks', 0),
-        "ptz_movements": stats.get('ptz_movements', 0),
-        "active_events": stats.get('active_events', 0),
-        "completed_events": stats.get('completed_events', 0),
-        "current_mode": stats.get('mode', 'unknown'),
-        "is_running": stats.get('is_running', False)
+        "frames_processed": 0,
+        "detections": 0,
+        "tracks": 0,
+        "ptz_movements": 0,
+        "active_events": 0,
+        "completed_events": 0,
+        "fps": 0,
+        "is_running": False,
+        "current_mode": "offline"
     }
 
 
@@ -365,11 +384,13 @@ async def get_events(limit: int = 50) -> List[Dict[str, Any]]:
 # ============================================================================
 
 def generate_frames():
-    """Generate video frames with detection overlays"""
+    """Generate video frames with detection overlays - optimized for low latency"""
     import time
     frame_count = 0
     PROCESS_EVERY_N_FRAMES = 2  # Process every 2nd frame (CPU optimization)
     last_detections = []  # Cache last detections
+    last_frame_time = time.time()
+    TARGET_FPS = 30  # Higher FPS for responsive video
     
     while True:
         if not stream_handler or stream_handler.stopped:
@@ -377,12 +398,12 @@ def generate_frames():
             break
         
         try:
-            # Get frame from stream
+            # Get frame from stream (non-blocking)
             frame = stream_handler.read()
             
             if frame is None:
-                logger.warning("No frame available from stream")
-                time.sleep(0.1)  # Wait a bit before retrying
+                # Don't wait long - quickly retry
+                time.sleep(0.001)
                 continue
             
             # Run detection only on every Nth frame
@@ -393,8 +414,8 @@ def generate_frames():
             if detector and last_detections:
                 frame = detector.draw_detections(frame, last_detections)
             
-            # Encode frame as JPEG with good quality
-            ret, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 82])
+            # Encode frame as JPEG with lower quality for speed
+            ret, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 75])
             
             if not ret:
                 logger.warning("Failed to encode frame")
@@ -410,8 +431,12 @@ def generate_frames():
             yield (b'--frame\r\n'
                    b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
             
-            # Smooth video at 20 FPS
-            time.sleep(0.05)  # ~20 FPS
+            # Target frame rate but don't block too long
+            elapsed = time.time() - last_frame_time
+            target_delay = 1.0 / TARGET_FPS
+            if elapsed < target_delay:
+                time.sleep(target_delay - elapsed)
+            last_frame_time = time.time()
             
         except Exception as e:
             logger.error(f"Error generating frame: {e}", exc_info=True)
