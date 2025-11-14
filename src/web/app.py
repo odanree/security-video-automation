@@ -225,18 +225,30 @@ async def get_statistics() -> Dict[str, Any]:
 
 @app.get("/api/camera/info")
 async def get_camera_info() -> Dict[str, Any]:
-    """Get camera information"""
+    """Get camera information including stream stats"""
     if not config_loader:
         raise HTTPException(status_code=503, detail="System not initialized")
     
     camera_config = config_loader.load_camera_config()
     camera = camera_config['cameras'][0]
     
+    # Get current stream FPS from stream handler
+    stream_fps = 0
+    if stream_handler:
+        try:
+            stream_stats = stream_handler.get_stats()
+            stream_fps = stream_stats.fps
+        except:
+            pass
+    
     return {
         "name": camera['name'],
         "ip": camera['ip'],
         "resolution": camera['stream']['resolution'],
-        "fps": camera['stream']['fps'],
+        "camera_fps": camera['stream']['fps'],
+        "stream_fps": round(stream_fps, 1),
+        "output_fps": 30,  # Default fast mode, will be updated by JS
+        "mode": "fast",  # Will be updated by JS based on detection toggle
         "has_ptz": camera.get('ptz', {}).get('enabled', False)
     }
 
@@ -397,9 +409,16 @@ def generate_frames(show_detections=False):
     frame_count = 0
     last_detections = []
     last_frame_time = time.time()
-    TARGET_FPS = 15 if show_detections else 30  # Lower FPS if processing
+    
+    # Different FPS targets per mode
+    if show_detections:
+        TARGET_FPS = 15  # Detection mode: 15 FPS with detection overlays (2x slower than fast)
+        PROCESS_EVERY_N_FRAMES = 1  # Process every frame
+    else:
+        TARGET_FPS = 30  # Fast mode: 30 FPS, no processing
+        PROCESS_EVERY_N_FRAMES = 1  # Not used in fast mode
+    
     JPEG_QUALITY = 70
-    PROCESS_EVERY_N_FRAMES = 2 if show_detections else 1
     
     while True:
         if not stream_handler or stream_handler.stopped:
@@ -414,12 +433,12 @@ def generate_frames(show_detections=False):
                 continue
             
             # Run detection if overlays are enabled
-            if show_detections and detector and frame_count % PROCESS_EVERY_N_FRAMES == 0:
+            if show_detections and detector:
                 last_detections = detector.detect(frame)
-            
-            # Draw cached detections if overlays are enabled
-            if show_detections and detector and last_detections:
-                frame = detector.draw_detections(frame, last_detections)
+                
+                # Draw detections on frame
+                if last_detections:
+                    frame = detector.draw_detections(frame, last_detections)
             
             # Encode frame as JPEG
             ret, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY])
@@ -435,7 +454,7 @@ def generate_frames(show_detections=False):
             yield (b'--frame\r\n'
                    b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
             
-            # Adaptive frame rate
+            # Enforce frame rate with adaptive timing
             elapsed = time.time() - last_frame_time
             target_delay = 1.0 / TARGET_FPS
             if elapsed < target_delay:

@@ -9,6 +9,7 @@ class Dashboard {
         this.maxReconnectAttempts = 5;
         this.reconnectDelay = 3000;
         this.isTracking = false;
+        this.isDetectionMode = false;  // Track current detection mode for FPS display
         this.streamUrl = '/api/video/stream';
         
         this.init();
@@ -204,30 +205,59 @@ class Dashboard {
     
     async loadSystemStatus() {
         try {
-            const response = await fetch('/api/status');
-            const data = await response.json();
+            // Fetch system status and camera info in parallel
+            const [statusResponse, cameraResponse] = await Promise.all([
+                fetch('/api/status'),
+                fetch('/api/camera/info')
+            ]);
             
-            // Update system info with null checks - match HTML element IDs
+            const status = await statusResponse.json();
+            const camera = cameraResponse.ok ? await cameraResponse.json() : null;
+            
+            // Update system info with null checks
             const streamStatusEl = document.getElementById('status-stream');
             if (streamStatusEl) {
-                streamStatusEl.textContent = data.camera_connected ? '✓ Connected' : '✗ Disconnected';
-                streamStatusEl.className = data.camera_connected ? 'badge badge-active' : 'badge badge-inactive';
+                streamStatusEl.textContent = status.camera_connected ? '✓ Connected' : '✗ Disconnected';
+                streamStatusEl.className = status.camera_connected ? 'badge badge-active' : 'badge badge-inactive';
             }
             
             const detectorStatusEl = document.getElementById('status-detector');
             if (detectorStatusEl) {
-                detectorStatusEl.textContent = data.ai_model_loaded ? '✓ Loaded' : '✗ Not Loaded';
-                detectorStatusEl.className = data.ai_model_loaded ? 'badge badge-active' : 'badge badge-inactive';
+                detectorStatusEl.textContent = status.ai_model_loaded ? '✓ Loaded' : '✗ Not Loaded';
+                detectorStatusEl.className = status.ai_model_loaded ? 'badge badge-active' : 'badge badge-inactive';
             }
             
             const ptzStatusEl = document.getElementById('status-ptz');
             if (ptzStatusEl) {
-                ptzStatusEl.textContent = data.ptz_enabled ? '✓ Enabled' : '✗ Disabled';
-                ptzStatusEl.className = data.ptz_enabled ? 'badge badge-active' : 'badge badge-inactive';
+                ptzStatusEl.textContent = status.ptz_enabled ? '✓ Enabled' : '✗ Disabled';
+                ptzStatusEl.className = status.ptz_enabled ? 'badge badge-active' : 'badge badge-inactive';
+            }
+            
+            // Update camera info section
+            if (camera) {
+                const cameraNameEl = document.getElementById('camera-name');
+                if (cameraNameEl) {
+                    cameraNameEl.textContent = camera.name || 'Unknown';
+                }
+                
+                const cameraResolutionEl = document.getElementById('camera-resolution');
+                if (cameraResolutionEl) {
+                    const res = camera.resolution;
+                    cameraResolutionEl.textContent = Array.isArray(res) 
+                        ? `${res[0]}x${res[1]}` 
+                        : (res || '--');
+                }
+                
+                const streamFpsEl = document.getElementById('stream-fps');
+                if (streamFpsEl) {
+                    // Show current output FPS (will update on detection toggle)
+                    const outputFps = this.isDetectionMode ? camera.output_fps_detection || 15 : (camera.output_fps || 30);
+                    streamFpsEl.textContent = `${outputFps} (${this.isDetectionMode ? 'detection' : 'fast'})`;
+                }
             }
             
             // Update tracking status
-            this.isTracking = data.tracking_active;
+            this.isTracking = status.tracking_active;
             this.updateTrackingUI();
             
         } catch (error) {
@@ -591,18 +621,37 @@ class Dashboard {
         
         if (!videoImg) return;
         
-        // Toggle between normal and detection stream
-        if (videoImg.src.includes('stream-detection')) {
-            // Switch back to normal stream
-            videoImg.src = '/api/video/stream';
+        // Determine target URL based on current state
+        let targetUrl;
+        if (videoImg.src.includes('detections=true')) {
+            // Switch back to normal stream (30 FPS, no overlays)
+            targetUrl = '/api/video/stream';
+            this.isDetectionMode = false;
             btn.style.opacity = '0.5';
-            console.log('Switched to fast stream (no detection overlays)');
+            btn.title = 'Enable Detection Overlays (15 FPS)';
+            console.log('Switching to fast stream: 30 FPS, no detection overlays');
         } else {
-            // Switch to detection stream
-            videoImg.src = '/api/video/stream-detection';
+            // Switch to detection stream (15 FPS, with overlays)
+            targetUrl = '/api/video/stream?detections=true';
+            this.isDetectionMode = true;
             btn.style.opacity = '1.0';
-            console.log('Switched to detection stream (with overlays)');
+            btn.title = 'Disable Detection Overlays (30 FPS)';
+            console.log('Switching to detection stream: 15 FPS with detection overlays');
         }
+        
+        // Force a new stream connection by:
+        // 1. Clearing the src (stops current stream)
+        // 2. Small delay to ensure disconnect
+        // 3. Set new src with cache buster
+        videoImg.src = '';
+        
+        setTimeout(() => {
+            const timestamp = Date.now();
+            videoImg.src = `${targetUrl}${targetUrl.includes('?') ? '&' : '?'}t=${timestamp}`;
+            
+            // Refresh camera info to update FPS display
+            this.loadSystemStatus();
+        }, 100);
     }
     
     // ========================================================================
