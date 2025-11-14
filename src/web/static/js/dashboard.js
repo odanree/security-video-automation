@@ -36,36 +36,30 @@ class Dashboard {
         this.ws = new WebSocket(wsUrl);
         
         this.ws.onopen = () => {
-            console.log('WebSocket connected');
             this.reconnectAttempts = 0;
             this.updateConnectionStatus(true);
         };
         
         this.ws.onmessage = (event) => {
-            console.log('WebSocket message received:', event.data);
             try {
                 const message = JSON.parse(event.data);
-                console.log('Parsed message:', message);
                 
                 // Handle different message types
                 if (message.type === 'statistics') {
-                    console.log('Statistics message:', message.data);
                     this.updateStatistics(message.data);
                 } else if (message.type === 'event') {
-                    console.log('Event message:', message.data);
                     this.addEventLog(message.data);
                 }
             } catch (e) {
-                console.error('Error parsing WebSocket message:', e);
+                // Silent fail
             }
         };
         
         this.ws.onerror = (error) => {
-            console.error('WebSocket error:', error);
+            // Silent fail
         };
         
         this.ws.onclose = () => {
-            console.log('WebSocket disconnected');
             this.updateConnectionStatus(false);
             this.attemptReconnect();
         };
@@ -74,7 +68,6 @@ class Dashboard {
     attemptReconnect() {
         if (this.reconnectAttempts < this.maxReconnectAttempts) {
             this.reconnectAttempts++;
-            console.log(`Reconnecting... (Attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts})`);
             setTimeout(() => this.connectWebSocket(), this.reconnectDelay);
         }
     }
@@ -111,12 +104,10 @@ class Dashboard {
         
         // For MJPEG streams in <img> tags, use onload instead of oncanplay
         videoElement.onload = () => {
-            console.log('Video stream loaded successfully');
             videoOverlay.classList.add('hidden');
         };
         
         videoElement.onerror = () => {
-            console.error('Video stream error');
             videoOverlay.classList.add('hidden');
             document.getElementById('video-status').textContent = 'Stream unavailable';
         };
@@ -124,7 +115,6 @@ class Dashboard {
         // Hide spinner after a short delay as fallback (MJPEG streams may not fire onload)
         setTimeout(() => {
             if (!videoOverlay.classList.contains('hidden')) {
-                console.log('Hiding spinner via timeout fallback');
                 videoOverlay.classList.add('hidden');
             }
         }, 2000);
@@ -135,7 +125,7 @@ class Dashboard {
         
         if (!document.fullscreenElement) {
             videoContainer.requestFullscreen().catch(err => {
-                console.error('Fullscreen error:', err);
+                // Silent fail
             });
         } else {
             document.exitFullscreen();
@@ -147,34 +137,20 @@ class Dashboard {
     // ========================================================================
     
     updateStatistics(data) {
-        console.log('Updating statistics:', data);
-        
-        // DEBUG: Update page title to confirm function is called
-        document.title = `Stats: ${data.detections || 0} detections | Tracker`;
-        
         // Update stat cards - map backend keys to DOM elements with null checks
         const detectionsEl = document.getElementById('stat-detections');
         if (detectionsEl) {
             detectionsEl.textContent = data.detections || 0;
-            console.log('Updated detections element:', detectionsEl.textContent);
-        } else {
-            console.warn('stat-detections element not found!');
         }
         
         const tracksEl = document.getElementById('stat-tracks');
         if (tracksEl) {
             tracksEl.textContent = data.tracks || 0;
-            console.log('Updated tracks element:', tracksEl.textContent);
-        } else {
-            console.warn('stat-tracks element not found!');
         }
         
         const eventsEl = document.getElementById('stat-events');
         if (eventsEl) {
             eventsEl.textContent = data.completed_events || 0;
-            console.log('Updated events element:', eventsEl.textContent);
-        } else {
-            console.warn('stat-events element not found!');
         }
         
         // Display additional stats if available
@@ -188,20 +164,15 @@ class Dashboard {
             if (!streamConnected && fps < 0.1) {
                 fpsElement.textContent = '--';
                 fpsElement.style.color = '#999999';
-                console.log('Stream disconnected, showing placeholder');
             } else if (fps >= 0.5) {
                 // Show FPS value if it's meaningful (>= 0.5)
                 fpsElement.textContent = fps.toFixed(1);
                 fpsElement.style.color = fps > 10 ? '#00FF00' : fps > 5 ? '#FFD700' : '#FF4444';
-                console.log('Updated FPS:', fps.toFixed(1));
             } else {
                 // FPS very low but stream might be starting - show 0.0 instead of --
                 fpsElement.textContent = '0.0';
                 fpsElement.style.color = '#FF4444';
-                console.log('FPS very low:', fps);
             }
-        } else {
-            console.warn('stat-fps element not found!');
         }
         
         // Update frame and processing info
@@ -279,7 +250,7 @@ class Dashboard {
             this.updateTrackingUI();
             
         } catch (error) {
-            console.error('Failed to load system status:', error);
+            // Silent fail
         }
     }
     
@@ -300,7 +271,6 @@ class Dashboard {
                 this.showNotification('Tracking started', 'success');
             }
         } catch (error) {
-            console.error('Failed to start tracking:', error);
             this.showNotification('Failed to start tracking', 'error');
         }
     }
@@ -318,7 +288,6 @@ class Dashboard {
                 this.showNotification('Tracking stopped', 'info');
             }
         } catch (error) {
-            console.error('Failed to stop tracking:', error);
             this.showNotification('Failed to stop tracking', 'error');
         }
     }
@@ -375,14 +344,12 @@ class Dashboard {
             
             const select = document.getElementById('preset-select');
             if (!select) {
-                console.warn('preset-select element not found');
                 return;
             }
             
             select.innerHTML = '<option value="">Select Preset...</option>';
             
             if (!Array.isArray(data.presets)) {
-                console.warn('No presets returned from API');
                 return;
             }
             
@@ -394,14 +361,13 @@ class Dashboard {
             });
             
         } catch (error) {
-            console.error('Failed to load presets:', error);
+            // Silent fail
         }
     }
     
     async gotoPreset() {
         const select = document.getElementById('preset-select');
         if (!select) {
-            console.warn('preset-select element not found');
             return;
         }
         
@@ -418,7 +384,6 @@ class Dashboard {
                 this.showNotification(`Moving to ${select.options[select.selectedIndex].text}`, 'success');
             }
         } catch (error) {
-            console.error('Failed to move camera:', error);
             this.showNotification('Failed to move camera', 'error');
         }
     }
@@ -452,7 +417,7 @@ class Dashboard {
                 throw new Error('Move failed');
             }
         } catch (error) {
-            console.error('PTZ move error:', error);
+            // Silent fail
         }
     }
     
@@ -472,7 +437,7 @@ class Dashboard {
                 throw new Error('Move failed');
             }
         } catch (error) {
-            console.error('PTZ move error:', error);
+            // Silent fail
         }
     }
     
@@ -487,7 +452,41 @@ class Dashboard {
                 throw new Error('Stop failed');
             }
         } catch (error) {
-            console.error('PTZ stop error:', error);
+            // Silent fail
+        }
+    }
+    
+    async continuousZoom(velocity) {
+        // Continuous zoom for hold-down behavior
+        try {
+            const response = await fetch('/api/camera/move', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ 
+                    pan_velocity: 0.0,
+                    tilt_velocity: 0.0,
+                    zoom_velocity: velocity
+                })
+            });
+            if (!response.ok) {
+                console.error('Zoom failed:', response.status, response.statusText);
+            }
+        } catch (error) {
+            console.error('Zoom error:', error.message);
+        }
+    }
+    
+    async stopZoom() {
+        try {
+            const response = await fetch('/api/camera/stop', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
+            });
+            if (!response.ok) {
+                console.error('Stop failed:', response.status, response.statusText);
+            }
+        } catch (error) {
+            console.error('Stop error:', error.message);
         }
     }
     
@@ -511,7 +510,6 @@ class Dashboard {
             
             const eventsContainer = document.getElementById('events-container');
             if (!eventsContainer) {
-                console.warn('events-container not found');
                 return;
             }
             
@@ -554,7 +552,7 @@ class Dashboard {
             `).join('');
             
         } catch (error) {
-            console.error('Failed to load events:', error);
+            // Silent fail
         }
     }
     
@@ -576,11 +574,10 @@ class Dashboard {
                 const response = await fetch('/api/statistics');
                 if (response.ok) {
                     const data = await response.json();
-                    console.log('Initial statistics load:', data);
                     this.updateStatistics(data);
                 }
             } catch (e) {
-                console.error('Error loading initial statistics:', e);
+                // Silent fail
             }
         })();
         
@@ -593,11 +590,10 @@ class Dashboard {
                 const response = await fetch('/api/statistics');
                 if (response.ok) {
                     const data = await response.json();
-                    console.log('Polled statistics:', data);
                     this.updateStatistics(data);
                 }
             } catch (e) {
-                console.error('Error polling statistics:', e);
+                // Silent fail
             }
         }, 2000);
         
@@ -607,13 +603,12 @@ class Dashboard {
                 const response = await fetch('/api/tracking/status');
                 if (response.ok) {
                     const data = await response.json();
-                    console.log('Tracking status:', data);
                     this.isTracking = data.running;
                     this.updateTrackingUI();
                     this.updateTrackingStats(data);
                 }
             } catch (e) {
-                console.error('Error polling tracking status:', e);
+                // Silent fail
             }
         }, 3000);
         
@@ -673,6 +668,63 @@ class Dashboard {
         // Preset selection
         document.getElementById('btn-goto-preset')?.addEventListener('click', () => this.gotoPreset());
         
+        // Zoom controls - hold-down behavior
+        const zoomInBtn = document.getElementById('btn-zoom-in');
+        const zoomOutBtn = document.getElementById('btn-zoom-out');
+        const self = this;
+        
+        if (zoomInBtn) {
+            let zoomInterval = null;
+            let isActive = false;
+            
+            zoomInBtn.addEventListener('mousedown', (e) => {
+                e.preventDefault();
+                if (isActive) return;
+                isActive = true;
+                zoomInBtn.style.opacity = '0.5';
+                self.continuousZoom(0.5);
+                self.showNotification('Zooming in...', 'info');
+                zoomInterval = setInterval(() => {
+                    self.continuousZoom(0.5);
+                }, 100);
+            });
+            
+            zoomInBtn.addEventListener('mouseup', () => {
+                if (!isActive) return;
+                isActive = false;
+                clearInterval(zoomInterval);
+                self.stopZoom();
+                zoomInBtn.style.opacity = '1';
+                self.showNotification('Zoom stopped', 'info');
+            });
+        }
+        
+        if (zoomOutBtn) {
+            let zoomInterval = null;
+            let isActive = false;
+            
+            zoomOutBtn.addEventListener('mousedown', (e) => {
+                e.preventDefault();
+                if (isActive) return;
+                isActive = true;
+                zoomOutBtn.style.opacity = '0.5';
+                self.continuousZoom(-0.5);
+                self.showNotification('Zooming out...', 'info');
+                zoomInterval = setInterval(() => {
+                    self.continuousZoom(-0.5);
+                }, 100);
+            });
+            
+            zoomOutBtn.addEventListener('mouseup', () => {
+                if (!isActive) return;
+                isActive = false;
+                clearInterval(zoomInterval);
+                self.stopZoom();
+                zoomOutBtn.style.opacity = '1';
+                self.showNotification('Zoom stopped', 'info');
+            });
+        }
+        
         // Speed slider
         document.getElementById('ptz-speed')?.addEventListener('input', () => this.updateSpeedDisplay());
         
@@ -701,14 +753,12 @@ class Dashboard {
             this.isDetectionMode = false;
             btn.style.opacity = '0.5';
             btn.title = 'Enable Detection Overlays (15 FPS)';
-            console.log('Switching to fast stream: 30 FPS, no detection overlays');
         } else {
             // Switch to detection stream (15 FPS, with overlays)
             targetUrl = '/api/video/stream?detections=true';
             this.isDetectionMode = true;
             btn.style.opacity = '1.0';
             btn.title = 'Disable Detection Overlays (30 FPS)';
-            console.log('Switching to detection stream: 15 FPS with detection overlays');
         }
         
         // Force a new stream connection by:
@@ -736,10 +786,78 @@ class Dashboard {
     }
     
     showNotification(message, type = 'info') {
-        console.log(`[${type.toUpperCase()}] ${message}`);
-        // TODO: Implement toast notification UI
+        const container = document.getElementById('notifications-container');
+        if (!container) return;
+        
+        // Create notification element
+        const notification = document.createElement('div');
+        notification.className = `notification notification-${type}`;
+        notification.style.cssText = `
+            padding: 12px 16px;
+            border-radius: 6px;
+            font-size: 14px;
+            font-weight: 500;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            animation: slideIn 0.3s ease-out;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+            min-width: 200px;
+        `;
+        
+        // Set color based on type
+        const colors = {
+            'success': { bg: '#10b981', text: '#fff', icon: '✓' },
+            'error': { bg: '#ef4444', text: '#fff', icon: '✕' },
+            'info': { bg: '#3b82f6', text: '#fff', icon: 'ℹ' },
+            'warning': { bg: '#f59e0b', text: '#fff', icon: '⚠' }
+        };
+        
+        const color = colors[type] || colors['info'];
+        notification.style.backgroundColor = color.bg;
+        notification.style.color = color.text;
+        
+        notification.innerHTML = `
+            <span style="font-size: 16px; font-weight: bold;">${color.icon}</span>
+            <span>${message}</span>
+        `;
+        
+        container.appendChild(notification);
+        
+        // Auto-remove after 3 seconds
+        setTimeout(() => {
+            notification.style.animation = 'slideOut 0.3s ease-out';
+            setTimeout(() => notification.remove(), 300);
+        }, 3000);
     }
 }
+
+// Add CSS animations for notifications
+const style = document.createElement('style');
+style.textContent = `
+    @keyframes slideIn {
+        from {
+            transform: translateX(400px);
+            opacity: 0;
+        }
+        to {
+            transform: translateX(0);
+            opacity: 1;
+        }
+    }
+    
+    @keyframes slideOut {
+        from {
+            transform: translateX(0);
+            opacity: 1;
+        }
+        to {
+            transform: translateX(400px);
+            opacity: 0;
+        }
+    }
+`;
+document.head.appendChild(style);
 
 // Initialize dashboard when DOM is ready
 document.addEventListener('DOMContentLoaded', () => {

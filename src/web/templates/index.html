@@ -22,6 +22,9 @@
         </div>
     </header>
 
+    <!-- Notifications Container -->
+    <div id="notifications-container" style="position: fixed; top: 80px; right: 20px; z-index: 1000; display: flex; flex-direction: column; gap: 10px;"></div>
+
     <!-- Main Dashboard -->
     <main class="dashboard-main">
         <div class="container">
@@ -64,8 +67,8 @@
             <!-- Video and Controls Row -->
             <div class="main-grid">
                 
-                <!-- Left: Video Feed -->
-                <div class="video-section">
+                <!-- Left: Video Feed (full width top section) -->
+                <div style="grid-column: 1 / -1;">
                     <div class="section-card">
                         <div class="section-header">
                             <h2>Live Camera Feed</h2>
@@ -102,7 +105,58 @@
                     </div>
                 </div>
 
-                <!-- Right: Control Panel -->
+                <!-- PTZ Controls (full width below video) -->
+                <div style="grid-column: 1 / -1;">
+                    <div class="section-card">
+                        <div class="section-header">
+                            <h2>PTZ Camera Control</h2>
+                        </div>
+                        
+                        <!-- Directional Pad -->
+                        <div class="ptz-dpad">
+                            <button class="dpad-btn dpad-up" data-pan="0" data-tilt="0.5">▲</button>
+                            <button class="dpad-btn dpad-left" data-pan="-0.5" data-tilt="0">◄</button>
+                            <button class="dpad-btn dpad-center">●</button>
+                            <button class="dpad-btn dpad-right" data-pan="0.5" data-tilt="0">►</button>
+                            <button class="dpad-btn dpad-down" data-pan="0" data-tilt="-0.5">▼</button>
+                        </div>
+
+                        <!-- Zoom Controls -->
+                        <div class="control-group" style="margin-top: 15px;">
+                            <label>Zoom Control:</label>
+                            <div style="display: flex; gap: 10px; margin-top: 8px;">
+                                <button id="btn-zoom-out" class="btn btn-secondary" style="flex: 1;">
+                                    <span style="font-size: 18px;">−</span> Zoom Out
+                                </button>
+                                <button id="btn-zoom-in" class="btn btn-secondary" style="flex: 1;">
+                                    <span style="font-size: 18px;">+</span> Zoom In
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Presets -->
+                        <div class="control-group">
+                            <label>Camera Presets:</label>
+                            <select id="preset-select" class="form-select">
+                                <option value="">Loading presets...</option>
+                            </select>
+                            <button id="btn-goto-preset" class="btn btn-secondary btn-block">
+                                Go to Preset
+                            </button>
+                        </div>
+
+                        <!-- Speed Control -->
+                        <div class="control-group">
+                            <label>Movement Speed:</label>
+                            <input type="range" id="ptz-speed" min="0.1" max="1.0" step="0.1" value="0.5" class="slider">
+                            <div class="slider-value">
+                                <span id="speed-value">0.5</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Right: Control Panel (tracking + status) -->
                 <div class="controls-section">
                     
                     <!-- Tracking Controls -->
@@ -126,42 +180,6 @@
                             <div class="status-row">
                                 <span>Uptime:</span>
                                 <span id="tracking-uptime">00:00:00</span>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- PTZ Controls -->
-                    <div class="section-card">
-                        <div class="section-header">
-                            <h2>PTZ Camera Control</h2>
-                        </div>
-                        
-                        <!-- Directional Pad -->
-                        <div class="ptz-dpad">
-                            <button class="dpad-btn dpad-up" data-pan="0" data-tilt="0.5">▲</button>
-                            <button class="dpad-btn dpad-left" data-pan="-0.5" data-tilt="0">◄</button>
-                            <button class="dpad-btn dpad-center">●</button>
-                            <button class="dpad-btn dpad-right" data-pan="0.5" data-tilt="0">►</button>
-                            <button class="dpad-btn dpad-down" data-pan="0" data-tilt="-0.5">▼</button>
-                        </div>
-
-                        <!-- Presets -->
-                        <div class="control-group">
-                            <label>Camera Presets:</label>
-                            <select id="preset-select" class="form-select">
-                                <option value="">Loading presets...</option>
-                            </select>
-                            <button id="btn-goto-preset" class="btn btn-secondary btn-block">
-                                Go to Preset
-                            </button>
-                        </div>
-
-                        <!-- Speed Control -->
-                        <div class="control-group">
-                            <label>Movement Speed:</label>
-                            <input type="range" id="ptz-speed" min="0.1" max="1.0" step="0.1" value="0.5" class="slider">
-                            <div class="slider-value">
-                                <span id="speed-value">0.5</span>
                             </div>
                         </div>
                     </div>
@@ -222,6 +240,6 @@
     </footer>
 
     <!-- Scripts -->
-    <script src="/static/js/dashboard.js?v=20251113-2"></script>
+            <script src="/static/js/dashboard.js?v=20251113-24"></script>
 </body>
 </html>

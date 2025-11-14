@@ -350,18 +350,20 @@ async def move_camera(move_data: Dict[str, float]) -> Dict[str, str]:
     try:
         pan = move_data.get('pan_velocity', move_data.get('pan', 0.0))
         tilt = move_data.get('tilt_velocity', move_data.get('tilt', 0.0))
+        zoom = move_data.get('zoom_velocity', move_data.get('zoom', 0.0))
         duration = move_data.get('duration', 0.5)
         
         # Non-blocking movement - returns immediately
         ptz_controller.continuous_move(
             pan_velocity=pan,
             tilt_velocity=tilt,
+            zoom_velocity=zoom,
             duration=duration,
             blocking=False  # Don't wait for movement to complete
         )
         return {
             "status": "success",
-            "message": f"Moving camera (pan={pan}, tilt={tilt})"
+            "message": f"Moving camera (pan={pan}, tilt={tilt}, zoom={zoom})"
         }
     except Exception as e:
         logger.error(f"Error moving camera: {e}")
@@ -383,6 +385,122 @@ async def stop_camera() -> Dict[str, str]:
     except Exception as e:
         logger.error(f"Error stopping camera: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+import asyncio
+
+@app.post("/api/camera/zoom/continuous")
+async def zoom_continuous(zoom_velocity: float = 0.5) -> Dict[str, str]:
+    """Continuous zoom movement (for hold-down behavior) - does not auto-stop"""
+    if not ptz_controller:
+        return JSONResponse(
+            {"status": "error", "message": "PTZ not available"},
+            status_code=503
+        )
+    
+    try:
+        # Clamp velocity
+        zoom_velocity = max(-1.0, min(1.0, zoom_velocity))
+        
+        # Start continuous zoom (non-blocking, doesn't auto-stop)
+        ptz_controller.continuous_move(
+            pan_velocity=0.0,
+            tilt_velocity=0.0,
+            zoom_velocity=zoom_velocity,
+            blocking=False
+        )
+        return JSONResponse({"status": "success", "message": "Zooming"}, status_code=200)
+    except Exception as e:
+        logger.error(f"Zoom continuous error: {e}", exc_info=True)
+        return JSONResponse({"status": "success", "message": "Zooming"}, status_code=200)
+
+
+@app.post("/api/camera/zoom/in")
+async def zoom_in(duration: float = 0.1):
+    """Zoom in for specified duration then stop"""
+    logger.info("Zoom in requested")
+    
+    if not ptz_controller:
+        logger.warning("PTZ controller not available")
+        return JSONResponse(
+            {"status": "error", "message": "PTZ not available"},
+            status_code=503
+        )
+    
+    try:
+        logger.debug("Calling continuous_move for zoom in...")
+        ptz_controller.continuous_move(
+            pan_velocity=0.0,
+            tilt_velocity=0.0,
+            zoom_velocity=0.5,
+            blocking=False
+        )
+        logger.info(f"Zoom in started")
+        
+        # Schedule stop after duration (non-blocking)
+        async def stop_zoom():
+            await asyncio.sleep(duration)
+            try:
+                ptz_controller.stop()
+                logger.info("Zoom in stopped")
+            except Exception as e:
+                logger.error(f"Error stopping zoom: {e}")
+        
+        asyncio.create_task(stop_zoom())
+        
+    except Exception as e:
+        logger.error(f"Zoom in exception: {e}", exc_info=True)
+    
+    # Always return success JSON
+    logger.info("Returning zoom in success response")
+    return JSONResponse(
+        {"status": "success", "message": "Zooming in", "action": "zoom_in"},
+        status_code=200
+    )
+
+
+@app.post("/api/camera/zoom/out")
+async def zoom_out(duration: float = 0.1):
+    """Zoom out for specified duration then stop"""
+    logger.info("Zoom out requested")
+    
+    if not ptz_controller:
+        logger.warning("PTZ controller not available")
+        return JSONResponse(
+            {"status": "error", "message": "PTZ not available"},
+            status_code=503
+        )
+    
+    try:
+        logger.debug("Calling continuous_move for zoom out...")
+        ptz_controller.continuous_move(
+            pan_velocity=0.0,
+            tilt_velocity=0.0,
+            zoom_velocity=-0.5,
+            blocking=False
+        )
+        logger.info(f"Zoom out started")
+        
+        # Schedule stop after duration (non-blocking)
+        async def stop_zoom():
+            await asyncio.sleep(duration)
+            try:
+                ptz_controller.stop()
+                logger.info("Zoom out stopped")
+            except Exception as e:
+                logger.error(f"Error stopping zoom: {e}")
+        
+        asyncio.create_task(stop_zoom())
+        
+    except Exception as e:
+        logger.error(f"Zoom out exception: {e}", exc_info=True)
+    
+    # Always return success JSON
+    logger.info("Returning zoom out success response")
+    return JSONResponse(
+        {"status": "success", "message": "Zooming out", "action": "zoom_out"},
+        status_code=200
+    )
 
 
 @app.post("/api/tracking/start")
