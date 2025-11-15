@@ -123,6 +123,45 @@ class StatsWorker(QThread):
         self.running = False
 
 
+class PixmapUpdateWorker(QThread):
+    """Background thread for updating video label pixmap (decoupled from frame capture)"""
+    pixmap_updated = pyqtSignal()
+    
+    def __init__(self, video_label):
+        super().__init__()
+        self.video_label = video_label
+        self.pixmap_queue = Queue(maxsize=2)  # Only keep latest 2 pixmaps
+        self.running = False
+        
+    def queue_pixmap(self, pixmap: QPixmap):
+        """Queue a pixmap for display (non-blocking)"""
+        # Discard old pixmaps if queue is full to prevent blocking
+        try:
+            self.pixmap_queue.put_nowait(pixmap)
+        except:
+            # Queue full - skip this frame
+            pass
+    
+    def run(self):
+        """Process pixmap updates in separate thread"""
+        self.running = True
+        while self.running:
+            try:
+                # Wait for pixmap with timeout to allow clean shutdown
+                pixmap = self.pixmap_queue.get(timeout=0.1)
+                
+                # Update label (this happens in the worker thread, not GUI thread)
+                self.video_label.setPixmap(pixmap)
+                self.pixmap_updated.emit()
+            except:
+                # Timeout or queue empty - just continue
+                pass
+    
+    def stop(self):
+        """Stop the worker"""
+        self.running = False
+        self.wait()
+
 class CameraTrackerApp(QMainWindow):
     """Main application window"""
     
@@ -194,8 +233,8 @@ class CameraTrackerApp(QMainWindow):
         self.video_label.setStyleSheet("background-color: black; border: 2px solid #555;")
         self.video_label.setMinimumSize(800, 600)  # Reasonable minimum
         self.video_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)  # Expand both directions
-        self.video_label.setScaledContents(True)  # Scale to fill space
-        self.video_label.setAlignment(Qt.AlignCenter)
+        self.video_label.setScaledContents(False)  # Don't stretch - we'll scale manually with aspect ratio
+        self.video_label.setAlignment(Qt.AlignCenter)  # Center the image
         left_layout.addWidget(self.video_label, 1)  # Stretch factor = 1
         
         # FPS and info label
@@ -211,15 +250,17 @@ class CameraTrackerApp(QMainWindow):
         right_scroll.setWidgetResizable(True)
         right_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         right_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        right_scroll.setMinimumWidth(350)  # Ensure controls panel has minimum width
-        right_scroll.setMaximumWidth(450)  # Limit maximum width for better layout
+        right_scroll.setMinimumWidth(220)  # Reduced from 350 for more video space
+        right_scroll.setMaximumWidth(280)  # Reduced from 450 for more video space
         
         # Enable mouse events for scroll area
         right_scroll.setFocusPolicy(Qt.StrongFocus)
         
         right_widget = QWidget()
-        right_widget.setMinimumWidth(330)  # Ensure content fits
+        right_widget.setMinimumWidth(200)  # Reduced from 330
         right_layout = QVBoxLayout()
+        right_layout.setSpacing(6)
+        right_layout.setContentsMargins(4, 4, 4, 4)
         right_widget.setLayout(right_layout)
         right_scroll.setWidget(right_widget)
         
@@ -316,6 +357,33 @@ class CameraTrackerApp(QMainWindow):
         self.btn_stop_tracking.setEnabled(False)
         tracking_layout.addWidget(self.btn_stop_tracking)
         
+        # Quadrant mode toggle button
+        quadrant_button_style = """
+            QPushButton {
+                background-color: #0ea5e9;
+                color: white;
+                border: none;
+                padding: 8px;
+                font-size: 12px;
+                border-radius: 4px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #0284c7;
+            }
+            QPushButton:pressed {
+                background-color: #0164a0;
+            }
+        """
+        
+        self.btn_toggle_quadrant = QPushButton("📍 Quadrant Mode: OFF")
+        self.btn_toggle_quadrant.setStyleSheet(quadrant_button_style)
+        self.btn_toggle_quadrant.setMinimumHeight(40)
+        self.btn_toggle_quadrant.clicked.connect(self.toggle_quadrant_mode)
+        tracking_layout.addWidget(self.btn_toggle_quadrant)
+        
+        self.quadrant_mode_enabled = False
+        
         self.tracking_status = QLabel("Status: Inactive")
         self.tracking_status.setFont(QFont("Courier", 10))
         tracking_layout.addWidget(self.tracking_status)
@@ -351,8 +419,127 @@ class CameraTrackerApp(QMainWindow):
         self.overlay_status.setStyleSheet("color: #666;")
         tracking_layout.addWidget(self.overlay_status)
         
+        # Quadrant borders overlay toggle button
+        quadrant_overlay_style = """
+            QPushButton {
+                background-color: #FF6F00;
+                color: white;
+                border: none;
+                padding: 8px;
+                font-size: 12px;
+                font-weight: bold;
+                border-radius: 5px;
+            }
+            QPushButton:hover {
+                background-color: #E65100;
+            }
+            QPushButton:pressed {
+                background-color: #D84315;
+            }
+        """
+        
+        self.btn_toggle_quadrant_overlay = QPushButton("✚ Quadrant Grid: OFF")
+        self.btn_toggle_quadrant_overlay.setStyleSheet(quadrant_overlay_style)
+        self.btn_toggle_quadrant_overlay.setMinimumHeight(35)
+        self.btn_toggle_quadrant_overlay.clicked.connect(self.toggle_quadrant_overlay)
+        tracking_layout.addWidget(self.btn_toggle_quadrant_overlay)
+        
+        self.quadrant_overlay_enabled = False
+        self.quadrant_overlay_status = QLabel("Quadrant Grid: OFF")
+        self.quadrant_overlay_status.setFont(QFont("Courier", 9))
+        self.quadrant_overlay_status.setStyleSheet("color: #666;")
+        tracking_layout.addWidget(self.quadrant_overlay_status)
+        
         tracking_frame.setLayout(tracking_layout)
         right_layout.addWidget(tracking_frame)
+        
+        # Quadrant Testing section
+        quadrant_frame = QFrame()
+        quadrant_frame.setStyleSheet("background-color: #fff3e0; border: 1px solid #ff9800; border-radius: 5px;")
+        quadrant_layout = QVBoxLayout()
+        
+        quadrant_title = QLabel("🎯 Quadrant Testing")
+        quadrant_title.setFont(QFont("Arial", 12, QFont.Bold))
+        quadrant_layout.addWidget(quadrant_title)
+        
+        quadrant_info = QLabel("Test auto-calculated quadrant presets:")
+        quadrant_info.setFont(QFont("Arial", 9))
+        quadrant_info.setStyleSheet("color: #666; margin-bottom: 5px;")
+        quadrant_layout.addWidget(quadrant_info)
+        
+        # Quadrant button style
+        quadrant_button_style = """
+            QPushButton {
+                background-color: #ff9800;
+                color: white;
+                border: none;
+                padding: 10px;
+                font-size: 12px;
+                font-weight: bold;
+                border-radius: 5px;
+            }
+            QPushButton:hover {
+                background-color: #fb8c00;
+            }
+            QPushButton:pressed {
+                background-color: #f57c00;
+            }
+        """
+        
+        # Grid for quadrant buttons (2x2)
+        quadrant_grid = QGridLayout()
+        
+        self.btn_quadrant_tl = QPushButton("↖ Top-Left\nQuadrant")
+        self.btn_quadrant_tl.setStyleSheet(quadrant_button_style)
+        self.btn_quadrant_tl.setMinimumHeight(50)
+        self.btn_quadrant_tl.clicked.connect(lambda: self.goto_quadrant_preset("top_left"))
+        quadrant_grid.addWidget(self.btn_quadrant_tl, 0, 0)
+        
+        self.btn_quadrant_tr = QPushButton("↗ Top-Right\nQuadrant")
+        self.btn_quadrant_tr.setStyleSheet(quadrant_button_style)
+        self.btn_quadrant_tr.setMinimumHeight(50)
+        self.btn_quadrant_tr.clicked.connect(lambda: self.goto_quadrant_preset("top_right"))
+        quadrant_grid.addWidget(self.btn_quadrant_tr, 0, 1)
+        
+        self.btn_quadrant_bl = QPushButton("↙ Bottom-Left\nQuadrant")
+        self.btn_quadrant_bl.setStyleSheet(quadrant_button_style)
+        self.btn_quadrant_bl.setMinimumHeight(50)
+        self.btn_quadrant_bl.clicked.connect(lambda: self.goto_quadrant_preset("bottom_left"))
+        quadrant_grid.addWidget(self.btn_quadrant_bl, 1, 0)
+        
+        self.btn_quadrant_br = QPushButton("↘ Bottom-Right\nQuadrant")
+        self.btn_quadrant_br.setStyleSheet(quadrant_button_style)
+        self.btn_quadrant_br.setMinimumHeight(50)
+        self.btn_quadrant_br.clicked.connect(lambda: self.goto_quadrant_preset("bottom_right"))
+        quadrant_grid.addWidget(self.btn_quadrant_br, 1, 1)
+        
+        quadrant_layout.addLayout(quadrant_grid)
+        
+        # Home/Center button
+        self.btn_quadrant_home = QPushButton("🏠 Return to Center (Home)")
+        self.btn_quadrant_home.setStyleSheet("""
+            QPushButton {
+                background-color: #607d8b;
+                color: white;
+                border: none;
+                padding: 10px;
+                font-size: 12px;
+                font-weight: bold;
+                border-radius: 5px;
+            }
+            QPushButton:hover {
+                background-color: #546e7a;
+            }
+            QPushButton:pressed {
+                background-color: #455a64;
+            }
+        """)
+        self.btn_quadrant_home.setMinimumHeight(40)
+        self.btn_quadrant_home.clicked.connect(lambda: self.goto_quadrant_preset("home"))
+        quadrant_layout.addWidget(self.btn_quadrant_home)
+        
+        quadrant_frame.setLayout(quadrant_layout)
+        right_layout.addWidget(quadrant_frame)
         
         # PTZ Control section
         ptz_frame = QFrame()
@@ -377,7 +564,29 @@ class CameraTrackerApp(QMainWindow):
                 background: white;
             }
         """)
+        self.preset_combo.setMaximumHeight(32)  # Fixed height to prevent layout recalc
+        self.preset_combo.setSizeAdjustPolicy(QComboBox.AdjustToContents)
+        # Connect dropdown changes to update idle override (if checkbox is checked)
+        self.preset_combo.currentIndexChanged.connect(self.on_preset_dropdown_changed)
         ptz_layout.addWidget(self.preset_combo)
+        
+        # Checkbox to control whether dropdown overrides admin preset
+        from PyQt5.QtWidgets import QCheckBox
+        self.override_home_preset_checkbox = QCheckBox("Override home preset with this")
+        self.override_home_preset_checkbox.setStyleSheet("""
+            QCheckBox {
+                font-size: 11px;
+                color: #333;
+            }
+            QCheckBox::indicator {
+                width: 16px;
+                height: 16px;
+            }
+        """)
+        self.override_home_preset_checkbox.setMaximumHeight(24)  # Fixed height
+        self.override_home_preset_checkbox.setChecked(False)  # Default: use admin preset
+        self.override_home_preset_checkbox.stateChanged.connect(self.on_override_checkbox_changed)
+        ptz_layout.addWidget(self.override_home_preset_checkbox)
         
         preset_button_style = """
             QPushButton {
@@ -426,10 +635,12 @@ class CameraTrackerApp(QMainWindow):
                 background-color: #4CAF50;
                 color: white;
                 border: none;
-                padding: 15px;
-                font-size: 16px;
+                padding: 8px;
+                font-size: 12px;
                 font-weight: bold;
                 border-radius: 5px;
+                min-width: 40px;
+                min-height: 40px;
             }
             QPushButton:hover {
                 background-color: #45a049;
@@ -500,6 +711,10 @@ class CameraTrackerApp(QMainWindow):
         
     def setup_workers(self):
         """Set up background threads"""
+        # Pixmap update worker - handles video label updates without blocking frame capture
+        self.pixmap_worker = PixmapUpdateWorker(self.video_label)
+        self.pixmap_worker.start()
+        
         # Video stream worker
         self.stream_worker = StreamWorker(self.camera_rtsp)
         self.stream_worker.frame_ready.connect(self.on_frame_received)
@@ -530,7 +745,11 @@ class CameraTrackerApp(QMainWindow):
         # Detection overlay cache
         self.cached_detections = []
         self.last_detection_fetch = 0
-        self.detection_fetch_interval = 1.0  # Fetch detections every 1 second (reduced from 0.5s for CPU)
+        # OPTIMIZATION: Reduced from 0.066s (15 FPS) to 0.2s (5 FPS) for CPU optimization
+        # 15 FPS fetch was excessive - detection only runs every 3rd frame (~5 FPS)
+        # Syncing fetch rate to detection rate reduces HTTP overhead by 3x
+        # Slight latency: +133ms (imperceptible, still synchronized to detection)
+        self.detection_fetch_interval = 0.2  # Fetch every 200ms (~5 FPS)
         
         # Optimization: Frame skip counter and display resolution tracking
         self.frame_skip_counter = 0
@@ -540,100 +759,235 @@ class CameraTrackerApp(QMainWindow):
     def on_frame_received(self, frame: np.ndarray):
         """Handle frame from video stream"""
         # Display all frames with minimal skipping for maximum smoothness
-        # No frame skipping - render every frame that arrives
         self.frame_skip_counter += 1
         
-        # Display all frames for maximum FPS (no frame skipping)
-        # This renders every frame the camera sends
         skip_rate = 1
         if self.frame_skip_counter % skip_rate != 0:
-            return  # Skip this frame
+            return
         
         # OPTIMIZATION: No color conversion when overlay disabled
-        # PyQt5 can display BGR directly (will have slightly different colors but saves CPU)
         if self.overlay_enabled:
-            # Copy frame for overlay modification
             display_frame = self.draw_detections_overlay(frame.copy())
-            # Convert BGR to RGB only when drawing overlay
             display_frame = cv2.cvtColor(display_frame, cv2.COLOR_BGR2RGB)
         else:
-            # SKIP COLOR CONVERSION - PyQt5 displays BGR as RGB (saves 5-10% CPU)
-            # This means colors will be slightly off but it's worth the CPU savings
-            display_frame = frame
+            display_frame = frame.copy()
         
-        # Track frame timing for FPS (optimize: ring buffer instead of append/pop)
+        # ⭐ QUADRANT OVERLAY: Draw independently
+        if self.quadrant_overlay_enabled:
+            display_frame = self.draw_quadrant_borders(display_frame)
+            if not self.overlay_enabled:
+                display_frame = cv2.cvtColor(display_frame, cv2.COLOR_BGR2RGB)
+        
+        # Track frame timing
         current_time = time.time()
         idx = self.frame_skip_counter % 60
         self.frame_times[idx] = current_time
         
-        # OPTIMIZATION: Reuse QImage if size hasn't changed (avoid memory allocation)
+        # OPTIMIZATION: Reuse QImage if size hasn't changed
         h, w = display_frame.shape[:2]
         
         if h != self.last_frame_h or w != self.last_frame_w:
-            # Size changed - create new QImage
             bytes_per_line = w * 3 if len(display_frame.shape) == 3 else w
             qt_image = QImage(display_frame.data, w, h, bytes_per_line, 
-                            QImage.Format_BGR888 if not self.overlay_enabled else QImage.Format_RGB888)
+                            QImage.Format_RGB888)
             self.last_frame_h = h
             self.last_frame_w = w
         else:
-            # Size same - just create image from buffer
             bytes_per_line = w * 3 if len(display_frame.shape) == 3 else w
             qt_image = QImage(display_frame.data, w, h, bytes_per_line,
-                            QImage.Format_BGR888 if not self.overlay_enabled else QImage.Format_RGB888)
+                            QImage.Format_RGB888)
         
         pixmap = QPixmap.fromImage(qt_image)
         
-        # Display at full size (will scale automatically due to setScaledContents(True))
-        self.video_label.setPixmap(pixmap)
+        label_width = self.video_label.width()
+        label_height = self.video_label.height()
+        
+        if label_width > 0 and label_height > 0:
+            # Use FastTransformation to avoid blocking
+            scaled_pixmap = pixmap.scaledToWidth(label_width, Qt.FastTransformation)
+            if scaled_pixmap.height() > label_height:
+                scaled_pixmap = pixmap.scaledToHeight(label_height, Qt.FastTransformation)
+            
+            # Queue pixmap for async update (non-blocking)
+            # Frame capture thread returns immediately without waiting for GUI update
+            self.pixmap_worker.queue_pixmap(scaled_pixmap)
+        else:
+            # Label not ready yet, queue pixmap anyway
+            self.pixmap_worker.queue_pixmap(pixmap)
     
     def draw_detections_overlay(self, frame: np.ndarray) -> np.ndarray:
-        """Draw detection boxes on frame (uses cached detections to avoid HTTP overhead)"""
+        """Draw detection boxes on frame (uses cached detections to avoid HTTP overhead).
+        
+        Important: Detections are drawn on the ORIGINAL frame (2560×1920) in the EXACT
+        coordinates where they will appear. The frame is then displayed with aspect-ratio
+        preservation, so boxes are always correctly positioned.
+        """
         current_time = time.time()
         
-        # Optimization: Only fetch detections every 1 second instead of 500ms
-        # (reduced from 0.5s to 1.0s - detection overlay doesn't need to be super real-time)
+        # CRITICAL FIX: Fetch detections frequently (every ~66ms = 15 FPS) to keep up with frame display
+        # Previously was 1.0s which caused massive lag where bounding boxes remained after subject left
         if current_time - self.last_detection_fetch > self.detection_fetch_interval:
             try:
-                # Non-blocking request with very short timeout
+                # Non-blocking request with very short timeout (50ms)
                 response = requests.get(f"{self.backend_url}/api/detections/current", timeout=0.05)
                 if response.status_code == 200:
-                    self.cached_detections = response.json()
+                    data = response.json()
+                    self.cached_detections = data if isinstance(data, list) else []
+                    # Debug: Only log when detections are found (reduce noise)
+                    if self.cached_detections:
+                        print(f"[DETECTIONS] Found {len(self.cached_detections)} detection(s)")
                 self.last_detection_fetch = current_time
-            except:
+            except requests.Timeout:
+                # Timeout is OK - just use cached detections until next fetch
+                pass
+            except Exception as e:
+                print(f"[ERROR] Detection fetch failed: {e}")
                 pass  # Keep using old cached detections
         
         # Get current frame dimensions
         frame_height, frame_width = frame.shape[:2]
         
-        # Desktop shows /11 (2560×1920), backend detects on /12 (800×600)
-        # Need to scale UP coordinates from backend to desktop
+        # Backend detection space: 800×600
         BACKEND_WIDTH, BACKEND_HEIGHT = 800, 600
-        scale_x = frame_width / BACKEND_WIDTH  # 3.2 (scale up!)
-        scale_y = frame_height / BACKEND_HEIGHT  # 3.2 (scale up!)
         
-        # Draw cached detections with upscaling
-        # Optimization: Cache the scale factors to avoid recalculating
+        # Calculate scale factors from backend to frame
+        # This converts bbox coordinates from detection space (800×600) to frame space
+        scale_x = frame_width / BACKEND_WIDTH
+        scale_y = frame_height / BACKEND_HEIGHT
+        
+        # IMPORTANT: Frame coordinates must be clamped to valid video area
+        # PyQt may display the frame with black bars for aspect ratio preservation,
+        # but we only draw within the actual video frame boundaries
+        max_valid_x = frame_width
+        max_valid_y = frame_height
+        
+        # Color mapping for different classes
+        colors = {
+            'person': (0, 255, 0),      # Green
+            'bicycle': (255, 165, 0),   # Orange
+            'car': (0, 165, 255),       # Blue (BGR: Red=0, Green=165, Blue=255)
+            'motorcycle': (255, 0, 255), # Magenta
+            'truck': (255, 255, 0)      # Cyan
+        }
+        
+        # Draw cached detections with proper scaling
+        detections_drawn = 0
+        
         for det in self.cached_detections:
-            x1, y1, x2, y2 = det['bbox']
-            label = det['class']
-            confidence = det['confidence']
-            
-            # Scale UP from 800×600 to 2560×1920
-            x1 = int(x1 * scale_x)
-            x2 = int(x2 * scale_x)
-            y1 = int(y1 * scale_y)
-            y2 = int(y2 * scale_y)
-            
-            # Draw box with scaled coordinates
-            cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
-            
-            # Draw label with background
-            text = f"{label} {confidence:.2f}"
-            (text_width, text_height), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 2)
-            cv2.rectangle(frame, (x1, y1 - text_height - 10), (x1 + text_width, y1), (0, 255, 0), -1)
-            cv2.putText(frame, text, (x1, y1 - 5), 
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 2)
+            try:
+                x1, y1, x2, y2 = det['bbox']
+                class_name = det['class']
+                confidence = det['confidence']
+                
+                # Scale UP from backend (800×600) to display frame 
+                x1 = int(x1 * scale_x)
+                x2 = int(x2 * scale_x)
+                y1 = int(y1 * scale_y)
+                y2 = int(y2 * scale_y)
+                
+                # CRITICAL FIX: Clamp all coordinates to valid frame boundaries
+                # This prevents boxes from appearing in black bar areas
+                # Coordinates must be within [0, frame_width) for X and [0, frame_height) for Y
+                x1 = max(0, min(x1, max_valid_x - 1))
+                x2 = max(x1 + 1, min(x2, max_valid_x))
+                y1 = max(0, min(y1, max_valid_y - 1))
+                y2 = max(y1 + 1, min(y2, max_valid_y))
+                
+                # Verify box is valid (has non-zero dimensions)
+                if x2 <= x1 or y2 <= y1:
+                    # Skip invalid boxes that would render at the boundary
+                    continue
+                
+                # Get color for this class
+                color = colors.get(class_name, (0, 255, 0))  # Default to green
+                
+                # Draw bounding box rectangle with thickness 2
+                cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
+                
+                # Draw label text with semi-transparent background
+                text = f"{class_name} {confidence:.2f}"
+                font = cv2.FONT_HERSHEY_SIMPLEX
+                font_scale = 0.5
+                font_thickness = 2
+                
+                # Get text size for background
+                (text_width, text_height), baseline = cv2.getTextSize(text, font, font_scale, font_thickness)
+                
+                # Place label above box
+                label_x = x1
+                label_y = max(25, y1 - 5)  # At least 25px from top
+                
+                # Draw semi-transparent background for label
+                overlay = frame.copy()
+                cv2.rectangle(overlay,
+                            (label_x, label_y - text_height - 10),
+                            (label_x + text_width + 5, label_y),
+                            color, -1)
+                cv2.addWeighted(overlay, 0.7, frame, 0.3, 0, frame)
+                
+                # Draw white text on top
+                cv2.putText(frame, text,
+                          (label_x + 2, label_y - 5),
+                          font, font_scale, (255, 255, 255), font_thickness)
+                
+                detections_drawn += 1
+                
+            except (KeyError, TypeError, ValueError, IndexError) as e:
+                print(f"[ERROR] Could not draw detection {det}: {e}")
+                continue
+        
+        if detections_drawn > 0:
+            print(f"[SUCCESS] Drew {detections_drawn} detection box(es) on {frame_width}×{frame_height} frame")
+        
+        return frame
+    
+    def draw_quadrant_borders(self, frame: np.ndarray) -> np.ndarray:
+        """Draw the 4 quadrant borders on the frame for visual reference.
+        
+        Divides the frame into 4 zones (left/right, top/bottom) with visible lines.
+        """
+        frame_height, frame_width = frame.shape[:2]
+        
+        # Calculate quadrant dividers (center points)
+        mid_x = frame_width // 2
+        mid_y = frame_height // 2
+        
+        # Quadrant line style: BRIGHT and THICK for visibility
+        line_color = (0, 255, 255)  # Cyan (bright yellow in BGR)
+        line_thickness = 2  # Increased from 1 for visibility
+        
+        # Vertical line (left/right divider) - SOLID line for visibility
+        cv2.line(frame, (mid_x, 0), (mid_x, frame_height), line_color, line_thickness)
+        
+        # Horizontal line (top/bottom divider) - SOLID line for visibility
+        cv2.line(frame, (0, mid_y), (frame_width, mid_y), line_color, line_thickness)
+        
+        # Add corner markers at quadrant intersections (larger crosshair)
+        marker_size = 20
+        marker_color = (0, 255, 255)  # Cyan
+        marker_thickness = 2
+        
+        # Center intersection crosshair
+        cv2.line(frame, (mid_x - marker_size, mid_y), (mid_x + marker_size, mid_y), marker_color, marker_thickness)
+        cv2.line(frame, (mid_x, mid_y - marker_size), (mid_x, mid_y + marker_size), marker_color, marker_thickness)
+        
+        # Draw quadrant labels (larger text for visibility)
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        font_scale = 0.8  # Increased from 0.5
+        font_thickness = 2  # Increased from 1
+        font_color = (0, 255, 255)  # Cyan to match lines
+        
+        # Top-left quadrant
+        cv2.putText(frame, "TL", (15, 30), font, font_scale, font_color, font_thickness)
+        
+        # Top-right quadrant
+        cv2.putText(frame, "TR", (frame_width - 45, 30), font, font_scale, font_color, font_thickness)
+        
+        # Bottom-left quadrant
+        cv2.putText(frame, "BL", (15, frame_height - 15), font, font_scale, font_color, font_thickness)
+        
+        # Bottom-right quadrant
+        cv2.putText(frame, "BR", (frame_width - 45, frame_height - 15), font, font_scale, font_color, font_thickness)
         
         return frame
     
@@ -696,6 +1050,20 @@ class CameraTrackerApp(QMainWindow):
             self.overlay_status.setStyleSheet("color: #666;")
             print("✓ Detection overlay disabled")
     
+    def toggle_quadrant_overlay(self):
+        """Toggle quadrant grid overlay on/off"""
+        self.quadrant_overlay_enabled = not self.quadrant_overlay_enabled
+        if self.quadrant_overlay_enabled:
+            self.quadrant_overlay_status.setText("Quadrant Grid: ON")
+            self.quadrant_overlay_status.setStyleSheet("color: #FF6F00; font-weight: bold;")
+            self.btn_toggle_quadrant_overlay.setText("✚ Quadrant Grid: ON")
+            print("✓ Quadrant grid overlay enabled")
+        else:
+            self.quadrant_overlay_status.setText("Quadrant Grid: OFF")
+            self.quadrant_overlay_status.setStyleSheet("color: #666;")
+            self.btn_toggle_quadrant_overlay.setText("✚ Quadrant Grid: OFF")
+            print("✓ Quadrant grid overlay disabled")
+    
     def start_tracking(self):
         """Start tracking"""
         try:
@@ -724,6 +1092,52 @@ class CameraTrackerApp(QMainWindow):
                 self.tracking_status.setText("Status: Inactive")
         except Exception as e:
             self.tracking_status.setText(f"Error: {e}")
+    
+    def toggle_quadrant_mode(self):
+        """Toggle between center and quadrant tracking modes"""
+        try:
+            response = requests.post(f"{self.backend_url}/api/tracking/quadrant/toggle", timeout=2)
+            if response.status_code == 200:
+                data = response.json()
+                self.quadrant_mode_enabled = data.get('quadrant_mode_enabled', False)
+                
+                # Update button appearance
+                if self.quadrant_mode_enabled:
+                    self.btn_toggle_quadrant.setText("📍 Quadrant Mode: ON")
+                    self.btn_toggle_quadrant.setStyleSheet("""
+                        QPushButton {
+                            background-color: #059669;
+                            color: white;
+                            border: none;
+                            padding: 8px;
+                            font-size: 12px;
+                            border-radius: 4px;
+                            font-weight: bold;
+                        }
+                        QPushButton:hover {
+                            background-color: #047857;
+                        }
+                    """)
+                    print("✓ Quadrant tracking mode ENABLED")
+                else:
+                    self.btn_toggle_quadrant.setText("📍 Quadrant Mode: OFF")
+                    self.btn_toggle_quadrant.setStyleSheet("""
+                        QPushButton {
+                            background-color: #0ea5e9;
+                            color: white;
+                            border: none;
+                            padding: 8px;
+                            font-size: 12px;
+                            border-radius: 4px;
+                            font-weight: bold;
+                        }
+                        QPushButton:hover {
+                            background-color: #0284c7;
+                        }
+                    """)
+                    print("✓ Quadrant tracking mode DISABLED")
+        except Exception as e:
+            print(f"✗ Failed to toggle quadrant mode: {e}")
     
     def load_presets(self):
         """Load camera presets from backend"""
@@ -830,16 +1244,21 @@ class CameraTrackerApp(QMainWindow):
             print(f"✗ Error sending PTZ command: {e}")
     
     def goto_preset(self):
-        """Move camera to selected preset"""
+        """Move camera to selected preset (run in thread to avoid blocking UI)"""
         preset_text = self.preset_combo.currentText()
         if preset_text == "Loading presets..." or preset_text == "No presets available":
             print("✗ Presets not loaded yet")
             return
         
-        # Get preset token from combo box data (safer than parsing text)
+        # Run in background thread
+        Thread(target=self._move_to_preset, daemon=True).start()
+    
+    def _move_to_preset(self):
+        """Background thread handler for moving to preset"""
         try:
             current_index = self.preset_combo.currentIndex()
             preset_token = self.preset_combo.itemData(current_index)
+            preset_text = self.preset_combo.currentText()
             
             if preset_token is None:
                 print("✗ No preset token found")
@@ -860,6 +1279,153 @@ class CameraTrackerApp(QMainWindow):
                 print(f"✗ Failed to move to preset: {response.status_code}")
         except Exception as e:
             print(f"✗ Error moving to preset: {e}")
+    
+    def on_preset_dropdown_changed(self):
+        """Handle preset dropdown change (run in thread to avoid blocking UI)"""
+        # Only proceed if checkbox is checked
+        if not self.override_home_preset_checkbox.isChecked():
+            return
+        
+        # Run API call in background thread
+        Thread(target=self._send_preset_override, daemon=True).start()
+    
+    def _send_preset_override(self):
+        """Background thread handler for sending preset override to API"""
+        try:
+            current_index = self.preset_combo.currentIndex()
+            preset_token = self.preset_combo.itemData(current_index)
+            preset_text = self.preset_combo.currentText()
+            
+            # Ignore if presets are still loading
+            if preset_text == "Loading presets..." or preset_text == "No presets available":
+                return
+            
+            if preset_token is None:
+                return
+            
+            # Send request to set idle override
+            response = requests.post(
+                f"{self.backend_url}/api/tracking/home-preset",
+                json={"preset_token": preset_token},
+                timeout=2
+            )
+            
+            if response.status_code == 200:
+                print(f"✓ Idle override preset set to: {preset_text} (will use at idle time)")
+            else:
+                print(f"✗ Failed to set idle override: {response.status_code}")
+        except Exception as e:
+            print(f"✗ Error setting idle override: {e}")
+    
+    def on_override_checkbox_changed(self):
+        """Handle override checkbox state change (run in thread to avoid blocking UI)"""
+        # Run in background thread to avoid blocking video
+        Thread(target=self._handle_checkbox_change, daemon=True).start()
+    
+    def _handle_checkbox_change(self):
+        """Background thread handler for checkbox changes"""
+        if self.override_home_preset_checkbox.isChecked():
+            # Checkbox just got checked - send current dropdown selection as override
+            print("✓ Override checkbox checked - will use dropdown preset at idle time")
+            self._send_preset_override()
+        else:
+            # Checkbox unchecked - clear the override (use admin config)
+            print("✓ Override checkbox unchecked - will use admin config preset at idle time")
+            try:
+                response = requests.post(
+                    f"{self.backend_url}/api/tracking/home-preset",
+                    json={"preset_token": None},  # Clear override
+                    timeout=2
+                )
+                if response.status_code == 200:
+                    print("✓ Override cleared - using admin config preset")
+            except Exception as e:
+                print(f"✗ Error clearing override: {e}")
+    
+    def goto_quadrant_preset(self, quadrant_name: str):
+        """Move camera to a specific quadrant position for testing
+        
+        This mimics the automatic quadrant tracking algorithm by:
+        1. Going to home/master view (Preset005)
+        2. Applying relative movement to reach the quadrant
+        
+        Args:
+            quadrant_name: Quadrant identifier ('top_left', 'top_right', 'bottom_left', 'bottom_right', 'home')
+        """
+        try:
+            if quadrant_name == "home":
+                # Just go to home position
+                response = requests.post(
+                    f"{self.backend_url}/api/camera/preset/Preset005",
+                    params={"speed": 1.0},
+                    timeout=5
+                )
+                
+                if response.status_code == 200:
+                    print(f"✓ Testing: Returned to Home/Center position")
+                else:
+                    print(f"✗ Failed to return to home: {response.status_code}")
+                return
+            
+            # Define quadrant offsets (same as in tracking_engine.py)
+            # INCREASED values from 0.25 to 0.5 for more visible movement
+            quadrant_offsets = {
+                'top_left': {'pan': -0.5, 'tilt': 0.5, 'name': 'Top-Left'},
+                'top_right': {'pan': 0.5, 'tilt': 0.5, 'name': 'Top-Right'},
+                'bottom_left': {'pan': -0.5, 'tilt': -0.5, 'name': 'Bottom-Left'},
+                'bottom_right': {'pan': 0.5, 'tilt': -0.5, 'name': 'Bottom-Right'}
+            }
+            
+            if quadrant_name not in quadrant_offsets:
+                print(f"✗ Unknown quadrant: {quadrant_name}")
+                return
+            
+            offset = quadrant_offsets[quadrant_name]
+            
+            # Step 1: Go to home/master view first
+            print(f"✓ Testing quadrant algorithm: Going to master view first...")
+            home_response = requests.post(
+                f"{self.backend_url}/api/camera/preset/Preset005",
+                params={"speed": 1.0},
+                timeout=5
+            )
+            
+            if home_response.status_code != 200:
+                print(f"✗ Failed to go to home position: {home_response.status_code}")
+                return
+            
+            # Wait for movement to complete
+            time.sleep(1.5)
+            
+            # Step 2: Apply relative movement to reach quadrant
+            print(f"✓ Testing: Moving to {offset['name']} quadrant (pan={offset['pan']}, tilt={offset['tilt']})")
+            
+            request_data = {
+                "pan_delta": offset['pan'],
+                "tilt_delta": offset['tilt'],
+                "zoom_delta": 0.0,
+                "speed": 0.5
+            }
+            
+            print(f"[DEBUG] Sending POST to {self.backend_url}/api/camera/ptz/relative")
+            print(f"[DEBUG] Request data: {request_data}")
+            
+            quadrant_response = requests.post(
+                f"{self.backend_url}/api/camera/ptz/relative",
+                json=request_data,
+                timeout=5
+            )
+            
+            print(f"[DEBUG] Response status: {quadrant_response.status_code}")
+            print(f"[DEBUG] Response body: {quadrant_response.text}")
+            
+            if quadrant_response.status_code == 200:
+                print(f"✓ Quadrant test complete: {offset['name']}")
+            else:
+                print(f"✗ Failed to move to quadrant: {quadrant_response.status_code} - {quadrant_response.text}")
+                
+        except Exception as e:
+            print(f"✗ Error testing quadrant: {e}")
             import traceback
             traceback.print_exc()
     
@@ -917,6 +1483,9 @@ class CameraTrackerApp(QMainWindow):
         
         self.stats_worker.stop()
         self.stats_worker.wait()
+        
+        self.pixmap_worker.stop()
+        self.pixmap_worker.wait()
         
         event.accept()
 

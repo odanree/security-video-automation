@@ -9,17 +9,19 @@ Provides REST API endpoints for:
 - System configuration
 """
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Body
 from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.requests import Request
 from fastapi.middleware.cors import CORSMiddleware
 from typing import Optional, List, Dict, Any
+from pydantic import BaseModel
 import cv2
 import asyncio
 import json
 import threading
+import time
 from datetime import datetime
 from pathlib import Path
 import logging
@@ -329,6 +331,15 @@ async def move_to_preset(preset_token: str, speed: float = 0.5) -> Dict[str, str
     
     try:
         ptz_controller.goto_preset(preset_token, speed=speed)
+        
+        # ⭐ PRESET LOCK: Notify tracking engine that user selected a preset
+        # This locks out auto-tracking for 2 seconds to let preset complete
+        # NOTE: Manual continuous pan/tilt/zoom holds are NOT locked out
+        if tracking_engine:
+            tracking_engine.preset_lock_active = True
+            tracking_engine.preset_lock_time = time.time()
+            logger.info(f"🔒 Preset lock activated - Auto-tracking locked for {tracking_engine.preset_lock_cooldown}s")
+        
         return {
             "status": "success",
             "message": f"Moving to preset {preset_token}",
@@ -383,6 +394,60 @@ async def stop_camera() -> Dict[str, str]:
         }
     except Exception as e:
         logger.error(f"Error stopping camera: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class RelativeMoveRequest(BaseModel):
+    """Request model for relative PTZ movement"""
+    pan_delta: float = 0.0
+    tilt_delta: float = 0.0
+    zoom_delta: float = 0.0
+    speed: float = 0.5
+
+
+@app.post("/api/camera/ptz/relative")
+async def ptz_relative_move(request: RelativeMoveRequest) -> Dict[str, str]:
+    """
+    Execute relative PTZ movement from current position
+    
+    Uses continuous move as fallback if relative move not supported
+    
+    Args:
+        request: RelativeMoveRequest with pan_delta, tilt_delta, zoom_delta, speed
+    """
+    if not ptz_controller:
+        raise HTTPException(status_code=503, detail="PTZ controller not available")
+    
+    try:
+        # FORCE continuous move fallback for testing (camera doesn't support relative move)
+        logger.info("Using continuous move for relative positioning (camera doesn't support RelativeMove)")
+        
+        # Calculate duration based on delta (larger delta = longer duration)
+        duration = abs(max(request.pan_delta, request.tilt_delta, key=abs)) * 2.0  # Scale to seconds
+        
+        # Convert delta to velocity (-1.0 to 1.0)
+        pan_velocity = request.pan_delta
+        tilt_velocity = request.tilt_delta
+        
+        logger.info(f"Continuous move fallback: pan={pan_velocity}, tilt={tilt_velocity}, duration={duration}s")
+        
+        # Execute continuous move
+        ptz_controller.continuous_move(
+            pan_velocity=pan_velocity,
+            tilt_velocity=tilt_velocity,
+            zoom_velocity=request.zoom_delta,
+            duration=duration,
+            blocking=True  # IMPORTANT: Block until movement completes
+        )
+        
+        logger.info(f"Relative PTZ move: pan={request.pan_delta}, tilt={request.tilt_delta}, zoom={request.zoom_delta}, speed={request.speed}")
+        
+        return {
+            "status": "success",
+            "message": f"Relative move executed (pan={request.pan_delta}, tilt={request.tilt_delta}, zoom={request.zoom_delta})"
+        }
+    except Exception as e:
+        logger.error(f"Error executing relative move: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -553,6 +618,108 @@ async def get_tracking_status() -> Dict[str, Any]:
         "completed_events": len(tracking_engine.completed_events),
         "detections": tracking_engine.detection_count,
         "ptz_movements": tracking_engine.ptz_movement_count
+    }
+
+
+@app.post("/api/tracking/quadrant/toggle")
+async def toggle_quadrant_mode(enabled: Optional[bool] = None) -> Dict[str, Any]:
+    """
+    Toggle between center tracking and quadrant-based tracking
+    
+    Args:
+        enabled: True to enable quadrant mode, False to disable, None to toggle
+        
+    Returns:
+        Status with current mode
+    """
+    global tracking_engine
+    
+    if not tracking_engine:
+        raise HTTPException(status_code=500, detail="Tracking engine not initialized")
+    
+    try:
+        new_state = tracking_engine.toggle_quadrant_mode(enabled)
+        mode_name = "QUADRANT" if new_state else "CENTER"
+        logger.info(f"Quadrant mode toggled to: {mode_name}")
+        
+        return {
+            "status": "success",
+            "quadrant_mode_enabled": new_state,
+            "tracking_mode": mode_name,
+            "message": f"Switched to {mode_name} tracking mode"
+        }
+    except Exception as e:
+        logger.error(f"Error toggling quadrant mode: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/tracking/home-preset")
+async def set_home_preset(request: Dict[str, str]) -> Dict[str, Any]:
+    """
+    Update idle override preset - checked at idle time
+    
+    When the idle timer triggers (15 seconds), the system will:
+    1. Check if this override preset is set (checkbox enabled)
+    2. If yes, use the override preset from dropdown
+    3. If no (None or unchecked), use the default from config
+    
+    Args:
+        request: JSON with 'preset_token' key (or None to clear override)
+        
+    Returns:
+        Status confirmation
+    """
+    global tracking_engine
+    
+    if not tracking_engine:
+        raise HTTPException(status_code=500, detail="Tracking engine not initialized")
+    
+    try:
+        preset_token = request.get('preset_token')
+        
+        if preset_token is None:
+            # Clear override - will use admin config
+            tracking_engine.idle_preset_override = None
+            logger.info(f"✓ Idle override cleared - will use config home preset")
+            
+            return {
+                "status": "success",
+                "idle_preset_override": None,
+                "message": "Idle override cleared - using config home preset"
+            }
+        else:
+            # Store the dropdown-selected preset as override
+            tracking_engine.idle_preset_override = preset_token
+            logger.info(f"✓ Idle override preset set to: {preset_token}")
+            
+            return {
+                "status": "success",
+                "idle_preset_override": preset_token,
+                "message": f"Idle override preset set to {preset_token}"
+            }
+    except Exception as e:
+        logger.error(f"Error setting idle preset override: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+
+@app.get("/api/tracking/quadrant/status")
+async def get_quadrant_status() -> Dict[str, Any]:
+    """Get current quadrant tracking mode status"""
+    global tracking_engine
+    
+    if not tracking_engine:
+        return {
+            "enabled": False,
+            "current_quadrant": None,
+            "mode": "offline"
+        }
+    
+    return {
+        "enabled": tracking_engine.get_quadrant_mode(),
+        "current_quadrant": tracking_engine.current_quadrant,
+        "mode": "quadrant" if tracking_engine.get_quadrant_mode() else "center",
+        "tracking_active": tracking_engine.running
     }
 
 

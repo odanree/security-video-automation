@@ -311,6 +311,22 @@ body {
     background-color: var(--color-secondary);
 }
 
+.btn-info {
+    background-color: #0ea5e9;
+    color: white;
+    border: 1px solid #0284c7;
+}
+
+.btn-info:hover:not(:disabled) {
+    background-color: #0284c7;
+    transform: translateY(-2px);
+}
+
+.btn-info.active {
+    background-color: #059669;
+    border-color: #047857;
+}
+
 .btn-block {
     width: 100%;
 }
@@ -356,9 +372,9 @@ body {
     display: grid;
     grid-template-columns: repeat(3, 1fr);
     grid-template-rows: repeat(3, 1fr);
-    gap: 0.5rem;
-    padding: 1rem 1.5rem;
-    max-width: 200px;
+    gap: 0.4rem;
+    padding: 0.75rem 1rem;
+    max-width: 150px;
     margin: 0 auto;
 }
 
@@ -368,7 +384,7 @@ body {
     background-color: var(--bg-input);
     color: var(--text-primary);
     border-radius: var(--border-radius);
-    font-size: 1.25rem;
+    font-size: 1rem;
     cursor: pointer;
     transition: var(--transition);
 }

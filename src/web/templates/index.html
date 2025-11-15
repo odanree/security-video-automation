@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Security Camera AI Tracker - Dashboard</title>
-    <link rel="stylesheet" href="/static/css/style.css">
+    <link rel="stylesheet" href="/static/css/style.css?v={{ now().timestamp() }}">
     <link rel="icon" type="image/x-icon" href="/static/images/favicon.ico">
 </head>
 <body>
@@ -122,12 +122,12 @@
                         <!-- Zoom Controls -->
                         <div class="control-group" style="margin-top: 15px;">
                             <label>Zoom Control:</label>
-                            <div style="display: flex; gap: 10px; margin-top: 8px;">
-                                <button id="btn-zoom-out" class="btn btn-secondary" style="flex: 1;">
-                                    <span style="font-size: 18px;">−</span> Zoom Out
+                            <div style="display: flex; gap: 8px; margin-top: 8px;">
+                                <button id="btn-zoom-out" class="btn btn-secondary btn-sm" style="flex: 1; font-size: 0.75rem; padding: 0.3rem 0.5rem;">
+                                    <span style="font-size: 14px;">−</span> Zoom Out
                                 </button>
-                                <button id="btn-zoom-in" class="btn btn-secondary" style="flex: 1;">
-                                    <span style="font-size: 18px;">+</span> Zoom In
+                                <button id="btn-zoom-in" class="btn btn-secondary btn-sm" style="flex: 1; font-size: 0.75rem; padding: 0.3rem 0.5rem;">
+                                    <span style="font-size: 14px;">+</span> Zoom In
                                 </button>
                             </div>
                         </div>
@@ -170,10 +170,22 @@
                                 ⏸️ Stop Tracking
                             </button>
                         </div>
+                        
+                        <!-- Quadrant Mode Toggle -->
+                        <div class="control-group">
+                            <button id="btn-toggle-quadrant" class="btn btn-info btn-block" title="Toggle between center and quadrant tracking">
+                                📍 Quadrant Mode: OFF
+                            </button>
+                        </div>
+                        
                         <div class="tracking-status">
                             <div class="status-row">
                                 <span>Status:</span>
                                 <span id="tracking-status" class="badge badge-inactive">Inactive</span>
+                            </div>
+                            <div class="status-row">
+                                <span>Mode:</span>
+                                <span id="tracking-mode" class="badge badge-info">Center</span>
                             </div>
                             <div class="status-row">
                                 <span>Uptime:</span>

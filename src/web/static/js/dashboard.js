@@ -455,6 +455,38 @@ class Dashboard {
         }
     }
     
+    async toggleQuadrantMode() {
+        """Toggle between center tracking and quadrant-based tracking"""
+        try {
+            const response = await fetch('/api/tracking/quadrant/toggle', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
+            });
+            
+            if (response.ok) {
+                const data = await response.json();
+                const btn = document.getElementById('btn-toggle-quadrant');
+                const modeDisplay = document.getElementById('tracking-mode');
+                
+                if (data.quadrant_mode_enabled) {
+                    btn.textContent = '📍 Quadrant Mode: ON';
+                    btn.classList.add('active');
+                    if (modeDisplay) modeDisplay.textContent = 'Quadrant';
+                    if (modeDisplay) modeDisplay.className = 'badge badge-info';
+                    this.showNotification('Switched to QUADRANT tracking', 'success');
+                } else {
+                    btn.textContent = '📍 Quadrant Mode: OFF';
+                    btn.classList.remove('active');
+                    if (modeDisplay) modeDisplay.textContent = 'Center';
+                    if (modeDisplay) modeDisplay.className = 'badge badge-success';
+                    this.showNotification('Switched to CENTER tracking', 'success');
+                }
+            }
+        } catch (error) {
+            this.showNotification('Failed to toggle quadrant mode', 'error');
+        }
+    }
+    
     updateTrackingUI() {
         const startBtn = document.getElementById('btn-start-tracking');
         const stopBtn = document.getElementById('btn-stop-tracking');
@@ -790,6 +822,7 @@ class Dashboard {
         // Tracking controls - correct IDs
         document.getElementById('btn-start-tracking')?.addEventListener('click', () => this.startTracking());
         document.getElementById('btn-stop-tracking')?.addEventListener('click', () => this.stopTracking());
+        document.getElementById('btn-toggle-quadrant')?.addEventListener('click', () => this.toggleQuadrantMode());
         
         // Video controls - correct IDs
         document.getElementById('btn-toggle-detections')?.addEventListener('click', () => this.toggleDetections());
