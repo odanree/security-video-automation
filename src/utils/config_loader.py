@@ -56,6 +56,7 @@ class TrackingConfig:
     events: Dict[str, Any]
     notifications: Dict[str, Any] = field(default_factory=dict)
     advanced: Dict[str, Any] = field(default_factory=dict)
+    quadrant_tracking: Dict[str, Any] = field(default_factory=dict)
     
     def get_zone_by_name(self, name: str) -> Optional[Dict[str, Any]]:
         """Get zone configuration by name"""
@@ -98,6 +99,11 @@ class AIConfig:
         """Get global confidence threshold"""
         inference = self.object_detection.get('inference', {})
         return inference.get('confidence_threshold', 0.6)
+    
+    def get_input_size(self) -> int:
+        """Get inference input size for frame downsampling"""
+        inference = self.object_detection.get('inference', {})
+        return inference.get('input_size', 416)
 
 
 class ConfigLoader:
@@ -131,7 +137,7 @@ class ConfigLoader:
             raise FileNotFoundError(f"Configuration file not found: {filepath}")
         
         try:
-            with open(filepath, 'r') as f:
+            with open(filepath, 'r', encoding='utf-8') as f:
                 config = yaml.safe_load(f)
                 
             # Replace environment variables
@@ -307,6 +313,9 @@ class ConfigLoader:
         home_preset = ptz_cfg.get('home_preset', 'Preset004')
         inactivity_timeout = ptz_cfg.get('inactivity_timeout', 5.0)
         
+        # Get quadrant tracking settings
+        quadrant_cfg = tracking_raw.quadrant_tracking or {}
+        
         # Create TrackingConfig
         config = TrackingConfig(
             zones=zones,
@@ -318,7 +327,8 @@ class ConfigLoader:
             max_tracking_age=3.0,
             enable_recording=False,
             home_preset=home_preset,
-            inactivity_timeout=inactivity_timeout
+            inactivity_timeout=inactivity_timeout,
+            quadrant_tracking=quadrant_cfg
         )
         
         return config

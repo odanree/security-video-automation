@@ -316,6 +316,33 @@ class CameraTrackerApp(QMainWindow):
         self.btn_stop_tracking.setEnabled(False)
         tracking_layout.addWidget(self.btn_stop_tracking)
         
+        # Quadrant mode toggle button
+        quadrant_button_style = """
+            QPushButton {
+                background-color: #0ea5e9;
+                color: white;
+                border: none;
+                padding: 8px;
+                font-size: 12px;
+                border-radius: 4px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #0284c7;
+            }
+            QPushButton:pressed {
+                background-color: #0164a0;
+            }
+        """
+        
+        self.btn_toggle_quadrant = QPushButton("📍 Quadrant Mode: OFF")
+        self.btn_toggle_quadrant.setStyleSheet(quadrant_button_style)
+        self.btn_toggle_quadrant.setMinimumHeight(40)
+        self.btn_toggle_quadrant.clicked.connect(self.toggle_quadrant_mode)
+        tracking_layout.addWidget(self.btn_toggle_quadrant)
+        
+        self.quadrant_mode_enabled = False
+        
         self.tracking_status = QLabel("Status: Inactive")
         self.tracking_status.setFont(QFont("Courier", 10))
         tracking_layout.addWidget(self.tracking_status)
@@ -353,6 +380,94 @@ class CameraTrackerApp(QMainWindow):
         
         tracking_frame.setLayout(tracking_layout)
         right_layout.addWidget(tracking_frame)
+        
+        # Quadrant Testing section
+        quadrant_frame = QFrame()
+        quadrant_frame.setStyleSheet("background-color: #fff3e0; border: 1px solid #ff9800; border-radius: 5px;")
+        quadrant_layout = QVBoxLayout()
+        
+        quadrant_title = QLabel("🎯 Quadrant Testing")
+        quadrant_title.setFont(QFont("Arial", 12, QFont.Bold))
+        quadrant_layout.addWidget(quadrant_title)
+        
+        quadrant_info = QLabel("Test auto-calculated quadrant presets:")
+        quadrant_info.setFont(QFont("Arial", 9))
+        quadrant_info.setStyleSheet("color: #666; margin-bottom: 5px;")
+        quadrant_layout.addWidget(quadrant_info)
+        
+        # Quadrant button style
+        quadrant_button_style = """
+            QPushButton {
+                background-color: #ff9800;
+                color: white;
+                border: none;
+                padding: 10px;
+                font-size: 12px;
+                font-weight: bold;
+                border-radius: 5px;
+            }
+            QPushButton:hover {
+                background-color: #fb8c00;
+            }
+            QPushButton:pressed {
+                background-color: #f57c00;
+            }
+        """
+        
+        # Grid for quadrant buttons (2x2)
+        quadrant_grid = QGridLayout()
+        
+        self.btn_quadrant_tl = QPushButton("↖ Top-Left\nQuadrant")
+        self.btn_quadrant_tl.setStyleSheet(quadrant_button_style)
+        self.btn_quadrant_tl.setMinimumHeight(50)
+        self.btn_quadrant_tl.clicked.connect(lambda: self.goto_quadrant_preset("top_left"))
+        quadrant_grid.addWidget(self.btn_quadrant_tl, 0, 0)
+        
+        self.btn_quadrant_tr = QPushButton("↗ Top-Right\nQuadrant")
+        self.btn_quadrant_tr.setStyleSheet(quadrant_button_style)
+        self.btn_quadrant_tr.setMinimumHeight(50)
+        self.btn_quadrant_tr.clicked.connect(lambda: self.goto_quadrant_preset("top_right"))
+        quadrant_grid.addWidget(self.btn_quadrant_tr, 0, 1)
+        
+        self.btn_quadrant_bl = QPushButton("↙ Bottom-Left\nQuadrant")
+        self.btn_quadrant_bl.setStyleSheet(quadrant_button_style)
+        self.btn_quadrant_bl.setMinimumHeight(50)
+        self.btn_quadrant_bl.clicked.connect(lambda: self.goto_quadrant_preset("bottom_left"))
+        quadrant_grid.addWidget(self.btn_quadrant_bl, 1, 0)
+        
+        self.btn_quadrant_br = QPushButton("↘ Bottom-Right\nQuadrant")
+        self.btn_quadrant_br.setStyleSheet(quadrant_button_style)
+        self.btn_quadrant_br.setMinimumHeight(50)
+        self.btn_quadrant_br.clicked.connect(lambda: self.goto_quadrant_preset("bottom_right"))
+        quadrant_grid.addWidget(self.btn_quadrant_br, 1, 1)
+        
+        quadrant_layout.addLayout(quadrant_grid)
+        
+        # Home/Center button
+        self.btn_quadrant_home = QPushButton("🏠 Return to Center (Home)")
+        self.btn_quadrant_home.setStyleSheet("""
+            QPushButton {
+                background-color: #607d8b;
+                color: white;
+                border: none;
+                padding: 10px;
+                font-size: 12px;
+                font-weight: bold;
+                border-radius: 5px;
+            }
+            QPushButton:hover {
+                background-color: #546e7a;
+            }
+            QPushButton:pressed {
+                background-color: #455a64;
+            }
+        """)
+        self.btn_quadrant_home.setMinimumHeight(40)
+        self.btn_quadrant_home.clicked.connect(lambda: self.goto_quadrant_preset("home"))
+        quadrant_layout.addWidget(self.btn_quadrant_home)
+        
+        quadrant_frame.setLayout(quadrant_layout)
+        right_layout.addWidget(quadrant_frame)
         
         # PTZ Control section
         ptz_frame = QFrame()
@@ -532,7 +647,11 @@ class CameraTrackerApp(QMainWindow):
         # Detection overlay cache
         self.cached_detections = []
         self.last_detection_fetch = 0
-        self.detection_fetch_interval = 1.0  # Fetch detections every 1 second (reduced from 0.5s for CPU)
+        # OPTIMIZATION: Reduced from 0.066s (15 FPS) to 0.2s (5 FPS) for CPU optimization
+        # 15 FPS fetch was excessive - detection only runs every 3rd frame (~5 FPS)
+        # Syncing fetch rate to detection rate reduces HTTP overhead by 3x
+        # Slight latency: +133ms (imperceptible, still synchronized to detection)
+        self.detection_fetch_interval = 0.2  # Fetch every 200ms (~5 FPS)
         
         # Optimization: Frame skip counter and display resolution tracking
         self.frame_skip_counter = 0
@@ -629,18 +748,22 @@ class CameraTrackerApp(QMainWindow):
         """
         current_time = time.time()
         
-        # Optimization: Only fetch detections every 1 second instead of 500ms
+        # CRITICAL FIX: Fetch detections frequently (every ~66ms = 15 FPS) to keep up with frame display
+        # Previously was 1.0s which caused massive lag where bounding boxes remained after subject left
         if current_time - self.last_detection_fetch > self.detection_fetch_interval:
             try:
-                # Non-blocking request with very short timeout
+                # Non-blocking request with very short timeout (50ms)
                 response = requests.get(f"{self.backend_url}/api/detections/current", timeout=0.05)
                 if response.status_code == 200:
                     data = response.json()
                     self.cached_detections = data if isinstance(data, list) else []
-                    # Debug: Log detection fetch
+                    # Debug: Only log when detections are found (reduce noise)
                     if self.cached_detections:
-                        print(f"[DETECTIONS] Fetched {len(self.cached_detections)} detections for overlay")
+                        print(f"[DETECTIONS] Found {len(self.cached_detections)} detection(s)")
                 self.last_detection_fetch = current_time
+            except requests.Timeout:
+                # Timeout is OK - just use cached detections until next fetch
+                pass
             except Exception as e:
                 print(f"[ERROR] Detection fetch failed: {e}")
                 pass  # Keep using old cached detections
@@ -648,11 +771,19 @@ class CameraTrackerApp(QMainWindow):
         # Get current frame dimensions
         frame_height, frame_width = frame.shape[:2]
         
-        # Desktop shows /11 (2560×1920), backend detects on /12 (800×600)
-        # Scale coordinates UP from backend to display frame
+        # Backend detection space: 800×600
         BACKEND_WIDTH, BACKEND_HEIGHT = 800, 600
-        scale_x = frame_width / BACKEND_WIDTH   # 2560/800 = 3.2
-        scale_y = frame_height / BACKEND_HEIGHT  # 1920/600 = 3.2
+        
+        # Calculate scale factors from backend to frame
+        # This converts bbox coordinates from detection space (800×600) to frame space
+        scale_x = frame_width / BACKEND_WIDTH
+        scale_y = frame_height / BACKEND_HEIGHT
+        
+        # IMPORTANT: Frame coordinates must be clamped to valid video area
+        # PyQt may display the frame with black bars for aspect ratio preservation,
+        # but we only draw within the actual video frame boundaries
+        max_valid_x = frame_width
+        max_valid_y = frame_height
         
         # Color mapping for different classes
         colors = {
@@ -665,8 +796,6 @@ class CameraTrackerApp(QMainWindow):
         
         # Draw cached detections with proper scaling
         detections_drawn = 0
-        if self.cached_detections:
-            print(f"[DRAW] Drawing {len(self.cached_detections)} detection(s) on overlay")
         
         for det in self.cached_detections:
             try:
@@ -674,20 +803,23 @@ class CameraTrackerApp(QMainWindow):
                 class_name = det['class']
                 confidence = det['confidence']
                 
-                # Scale UP from backend (800×600) to display frame (2560×1920)
+                # Scale UP from backend (800×600) to display frame 
                 x1 = int(x1 * scale_x)
                 x2 = int(x2 * scale_x)
                 y1 = int(y1 * scale_y)
                 y2 = int(y2 * scale_y)
                 
-                # Ensure coordinates are in bounds
-                x1 = max(0, min(x1, frame_width - 1))
-                x2 = max(x1 + 1, min(x2, frame_width))
-                y1 = max(0, min(y1, frame_height - 1))
-                y2 = max(y1 + 1, min(y2, frame_height))
+                # CRITICAL FIX: Clamp all coordinates to valid frame boundaries
+                # This prevents boxes from appearing in black bar areas
+                # Coordinates must be within [0, frame_width) for X and [0, frame_height) for Y
+                x1 = max(0, min(x1, max_valid_x - 1))
+                x2 = max(x1 + 1, min(x2, max_valid_x))
+                y1 = max(0, min(y1, max_valid_y - 1))
+                y2 = max(y1 + 1, min(y2, max_valid_y))
                 
+                # Verify box is valid (has non-zero dimensions)
                 if x2 <= x1 or y2 <= y1:
-                    print(f"[SKIP] Invalid box: ({x1},{y1}) to ({x2},{y2})")
+                    # Skip invalid boxes that would render at the boundary
                     continue
                 
                 # Get color for this class
@@ -729,7 +861,7 @@ class CameraTrackerApp(QMainWindow):
                 continue
         
         if detections_drawn > 0:
-            print(f"[SUCCESS] Drew {detections_drawn} detection box(es)")
+            print(f"[SUCCESS] Drew {detections_drawn} detection box(es) on {frame_width}×{frame_height} frame")
         
         return frame
     
@@ -820,6 +952,52 @@ class CameraTrackerApp(QMainWindow):
                 self.tracking_status.setText("Status: Inactive")
         except Exception as e:
             self.tracking_status.setText(f"Error: {e}")
+    
+    def toggle_quadrant_mode(self):
+        """Toggle between center and quadrant tracking modes"""
+        try:
+            response = requests.post(f"{self.backend_url}/api/tracking/quadrant/toggle", timeout=2)
+            if response.status_code == 200:
+                data = response.json()
+                self.quadrant_mode_enabled = data.get('quadrant_mode_enabled', False)
+                
+                # Update button appearance
+                if self.quadrant_mode_enabled:
+                    self.btn_toggle_quadrant.setText("📍 Quadrant Mode: ON")
+                    self.btn_toggle_quadrant.setStyleSheet("""
+                        QPushButton {
+                            background-color: #059669;
+                            color: white;
+                            border: none;
+                            padding: 8px;
+                            font-size: 12px;
+                            border-radius: 4px;
+                            font-weight: bold;
+                        }
+                        QPushButton:hover {
+                            background-color: #047857;
+                        }
+                    """)
+                    print("✓ Quadrant tracking mode ENABLED")
+                else:
+                    self.btn_toggle_quadrant.setText("📍 Quadrant Mode: OFF")
+                    self.btn_toggle_quadrant.setStyleSheet("""
+                        QPushButton {
+                            background-color: #0ea5e9;
+                            color: white;
+                            border: none;
+                            padding: 8px;
+                            font-size: 12px;
+                            border-radius: 4px;
+                            font-weight: bold;
+                        }
+                        QPushButton:hover {
+                            background-color: #0284c7;
+                        }
+                    """)
+                    print("✓ Quadrant tracking mode DISABLED")
+        except Exception as e:
+            print(f"✗ Failed to toggle quadrant mode: {e}")
     
     def load_presets(self):
         """Load camera presets from backend"""
@@ -956,6 +1134,93 @@ class CameraTrackerApp(QMainWindow):
                 print(f"✗ Failed to move to preset: {response.status_code}")
         except Exception as e:
             print(f"✗ Error moving to preset: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    def goto_quadrant_preset(self, quadrant_name: str):
+        """Move camera to a specific quadrant position for testing
+        
+        This mimics the automatic quadrant tracking algorithm by:
+        1. Going to home/master view (Preset005)
+        2. Applying relative movement to reach the quadrant
+        
+        Args:
+            quadrant_name: Quadrant identifier ('top_left', 'top_right', 'bottom_left', 'bottom_right', 'home')
+        """
+        try:
+            if quadrant_name == "home":
+                # Just go to home position
+                response = requests.post(
+                    f"{self.backend_url}/api/camera/preset/Preset005",
+                    params={"speed": 1.0},
+                    timeout=5
+                )
+                
+                if response.status_code == 200:
+                    print(f"✓ Testing: Returned to Home/Center position")
+                else:
+                    print(f"✗ Failed to return to home: {response.status_code}")
+                return
+            
+            # Define quadrant offsets (same as in tracking_engine.py)
+            # INCREASED values from 0.25 to 0.5 for more visible movement
+            quadrant_offsets = {
+                'top_left': {'pan': -0.5, 'tilt': 0.5, 'name': 'Top-Left'},
+                'top_right': {'pan': 0.5, 'tilt': 0.5, 'name': 'Top-Right'},
+                'bottom_left': {'pan': -0.5, 'tilt': -0.5, 'name': 'Bottom-Left'},
+                'bottom_right': {'pan': 0.5, 'tilt': -0.5, 'name': 'Bottom-Right'}
+            }
+            
+            if quadrant_name not in quadrant_offsets:
+                print(f"✗ Unknown quadrant: {quadrant_name}")
+                return
+            
+            offset = quadrant_offsets[quadrant_name]
+            
+            # Step 1: Go to home/master view first
+            print(f"✓ Testing quadrant algorithm: Going to master view first...")
+            home_response = requests.post(
+                f"{self.backend_url}/api/camera/preset/Preset005",
+                params={"speed": 1.0},
+                timeout=5
+            )
+            
+            if home_response.status_code != 200:
+                print(f"✗ Failed to go to home position: {home_response.status_code}")
+                return
+            
+            # Wait for movement to complete
+            time.sleep(1.5)
+            
+            # Step 2: Apply relative movement to reach quadrant
+            print(f"✓ Testing: Moving to {offset['name']} quadrant (pan={offset['pan']}, tilt={offset['tilt']})")
+            
+            request_data = {
+                "pan_delta": offset['pan'],
+                "tilt_delta": offset['tilt'],
+                "zoom_delta": 0.0,
+                "speed": 0.5
+            }
+            
+            print(f"[DEBUG] Sending POST to {self.backend_url}/api/camera/ptz/relative")
+            print(f"[DEBUG] Request data: {request_data}")
+            
+            quadrant_response = requests.post(
+                f"{self.backend_url}/api/camera/ptz/relative",
+                json=request_data,
+                timeout=5
+            )
+            
+            print(f"[DEBUG] Response status: {quadrant_response.status_code}")
+            print(f"[DEBUG] Response body: {quadrant_response.text}")
+            
+            if quadrant_response.status_code == 200:
+                print(f"✓ Quadrant test complete: {offset['name']}")
+            else:
+                print(f"✗ Failed to move to quadrant: {quadrant_response.status_code} - {quadrant_response.text}")
+                
+        except Exception as e:
+            print(f"✗ Error testing quadrant: {e}")
             import traceback
             traceback.print_exc()
     

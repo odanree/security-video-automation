@@ -93,6 +93,64 @@ taskkill /F /IM python.exe; python start_dashboard.py
 - **ONVIF** - Standard protocol for IP camera control (PTZ)
 - **Flask/FastAPI** - Web interface and API server (optional)
 - **asyncio** - Asynchronous camera control and video processing
+- **PyQt5** - Desktop GUI application for direct monitoring and control
+
+### Desktop Application (PyQt5)
+
+**New Feature: Desktop App for Local Monitoring** ✨
+
+A native PyQt5 desktop application provides direct video monitoring and PTZ control without requiring a web browser.
+
+**Location:** `desktop_app/main.py` (1108 lines)
+
+**Features:**
+- 🎥 **Live H.264 RTSP streaming** with real-time video display
+- 🎯 **Detection overlay** with bounding boxes (colored by class)
+- 🤖 **AI object detection** (persons, cars, bicycles with confidence scores)
+- 🎮 **PTZ manual controls** with tap-and-hold for smooth movement
+- 📍 **Automatic tracking** with distance-aware pan/tilt and predictive positioning
+- 🎬 **Smart zoom** applied every frame with intelligent stopping logic
+- 🌐 **Quadrant mode toggle** for multi-zone automatic preset switching
+- 📊 **Real-time statistics** (FPS, latency, detection count, tracking status)
+- 🎚️ **Manual camera controls** (zoom, focus, iris)
+- 🔧 **Preset management** (load and switch camera presets)
+- ⚙️ **Configuration UI** (adjust thresholds, speeds, parameters)
+
+**Key Methods Added (Recent Update - Nov 14, 2025):**
+- `toggle_quadrant_mode()` - Toggle between center and quadrant tracking modes
+  - Calls API endpoint: POST `/api/tracking/quadrant/toggle`
+  - Updates button color: Blue (OFF) ↔ Green (ON)
+  - Updates button text: "OFF" ↔ "ON"
+  - Logs status to console
+
+**Running the Desktop App:**
+```powershell
+# Activate venv and run
+.\venv\Scripts\python.exe desktop_app/main.py
+
+# Or use the dashboard restart script
+taskkill /F /IM python.exe 2>$null; .\restart_dashboard.ps1
+```
+
+**Desktop vs Web Dashboard:**
+
+| Feature | Desktop App | Web Dashboard |
+|---------|------------|---------------|
+| Real-time video | ✅ H.264 streaming | ✅ JPEG streaming (65ms latency) |
+| PTZ controls | ✅ Native UI | ✅ Web buttons |
+| Quadrant mode | ✅ Toggle button (NEW) | ✅ Toggle button |
+| Detection overlay | ✅ Bounding boxes | ⚠️ Limited |
+| Manual controls | ✅ Zoom/focus/iris | ❌ No |
+| Presets | ✅ Dropdown menu | ❌ No |
+| Statistics | ✅ Real-time display | ✅ Chart data |
+| Deployment | 🖥️ Local only | 🌐 Anywhere |
+
+**Recent Enhancements (Nov 14, 2025):**
+- ✅ Added quadrant mode toggle button with dynamic color updates
+- ✅ Implemented toggle_quadrant_mode() method
+- ✅ Synchronized features with web dashboard
+- ✅ Added comprehensive error handling
+- ✅ Visual feedback for mode changes (button color/text updates)
 
 ## Project Structure
 
@@ -1523,3 +1581,4 @@ Before creating any new file, ask:
 ---
 
 **Remember:** Start simple, test thoroughly, and iterate. First verify PTZ API works, then add AI, then combine them for automation. Add web dashboard for portfolio impact!
+

@@ -309,15 +309,16 @@ class PTZController:
                 'Zoom': {'x': speed}
             }
             
-            logger.debug(
-                f"Relative move: pan_delta={pan_delta}, tilt_delta={tilt_delta}"
+            logger.info(
+                f"Executing relative move: pan={pan_delta}, tilt={tilt_delta}, zoom={zoom_delta}, speed={speed}"
             )
             self.ptz_service.RelativeMove(request)
+            logger.info("Relative move command sent successfully")
             
             return True
             
         except Exception as e:
-            logger.error(f"Relative move failed: {e}")
+            logger.error(f"Relative move failed: {e}", exc_info=True)
             return False
     
     def stop(self) -> bool:

@@ -9,13 +9,14 @@ Provides REST API endpoints for:
 - System configuration
 """
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Body
 from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.requests import Request
 from fastapi.middleware.cors import CORSMiddleware
 from typing import Optional, List, Dict, Any
+from pydantic import BaseModel
 import cv2
 import asyncio
 import json
@@ -386,6 +387,60 @@ async def stop_camera() -> Dict[str, str]:
         raise HTTPException(status_code=500, detail=str(e))
 
 
+class RelativeMoveRequest(BaseModel):
+    """Request model for relative PTZ movement"""
+    pan_delta: float = 0.0
+    tilt_delta: float = 0.0
+    zoom_delta: float = 0.0
+    speed: float = 0.5
+
+
+@app.post("/api/camera/ptz/relative")
+async def ptz_relative_move(request: RelativeMoveRequest) -> Dict[str, str]:
+    """
+    Execute relative PTZ movement from current position
+    
+    Uses continuous move as fallback if relative move not supported
+    
+    Args:
+        request: RelativeMoveRequest with pan_delta, tilt_delta, zoom_delta, speed
+    """
+    if not ptz_controller:
+        raise HTTPException(status_code=503, detail="PTZ controller not available")
+    
+    try:
+        # FORCE continuous move fallback for testing (camera doesn't support relative move)
+        logger.info("Using continuous move for relative positioning (camera doesn't support RelativeMove)")
+        
+        # Calculate duration based on delta (larger delta = longer duration)
+        duration = abs(max(request.pan_delta, request.tilt_delta, key=abs)) * 2.0  # Scale to seconds
+        
+        # Convert delta to velocity (-1.0 to 1.0)
+        pan_velocity = request.pan_delta
+        tilt_velocity = request.tilt_delta
+        
+        logger.info(f"Continuous move fallback: pan={pan_velocity}, tilt={tilt_velocity}, duration={duration}s")
+        
+        # Execute continuous move
+        ptz_controller.continuous_move(
+            pan_velocity=pan_velocity,
+            tilt_velocity=tilt_velocity,
+            zoom_velocity=request.zoom_delta,
+            duration=duration,
+            blocking=True  # IMPORTANT: Block until movement completes
+        )
+        
+        logger.info(f"Relative PTZ move: pan={request.pan_delta}, tilt={request.tilt_delta}, zoom={request.zoom_delta}, speed={request.speed}")
+        
+        return {
+            "status": "success",
+            "message": f"Relative move executed (pan={request.pan_delta}, tilt={request.tilt_delta}, zoom={request.zoom_delta})"
+        }
+    except Exception as e:
+        logger.error(f"Error executing relative move: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 import asyncio
 
 @app.post("/api/camera/zoom/continuous")
@@ -553,6 +608,58 @@ async def get_tracking_status() -> Dict[str, Any]:
         "completed_events": len(tracking_engine.completed_events),
         "detections": tracking_engine.detection_count,
         "ptz_movements": tracking_engine.ptz_movement_count
+    }
+
+
+@app.post("/api/tracking/quadrant/toggle")
+async def toggle_quadrant_mode(enabled: Optional[bool] = None) -> Dict[str, Any]:
+    """
+    Toggle between center tracking and quadrant-based tracking
+    
+    Args:
+        enabled: True to enable quadrant mode, False to disable, None to toggle
+        
+    Returns:
+        Status with current mode
+    """
+    global tracking_engine
+    
+    if not tracking_engine:
+        raise HTTPException(status_code=500, detail="Tracking engine not initialized")
+    
+    try:
+        new_state = tracking_engine.toggle_quadrant_mode(enabled)
+        mode_name = "QUADRANT" if new_state else "CENTER"
+        logger.info(f"Quadrant mode toggled to: {mode_name}")
+        
+        return {
+            "status": "success",
+            "quadrant_mode_enabled": new_state,
+            "tracking_mode": mode_name,
+            "message": f"Switched to {mode_name} tracking mode"
+        }
+    except Exception as e:
+        logger.error(f"Error toggling quadrant mode: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/tracking/quadrant/status")
+async def get_quadrant_status() -> Dict[str, Any]:
+    """Get current quadrant tracking mode status"""
+    global tracking_engine
+    
+    if not tracking_engine:
+        return {
+            "enabled": False,
+            "current_quadrant": None,
+            "mode": "offline"
+        }
+    
+    return {
+        "enabled": tracking_engine.get_quadrant_mode(),
+        "current_quadrant": tracking_engine.current_quadrant,
+        "mode": "quadrant" if tracking_engine.get_quadrant_mode() else "center",
+        "tracking_active": tracking_engine.running
     }
 
 

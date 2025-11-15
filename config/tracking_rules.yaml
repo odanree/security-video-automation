@@ -15,6 +15,9 @@ tracking:
   target_classes:
     - "person"
     - "bicycle"
+    - "motorcycle"
+    - "bus"
+    - "truck"
     - "dog"
     - "cat"
     - "bird"
@@ -85,7 +88,49 @@ tracking:
       preset: "Preset005"
       priority: 3
   
-  # Direction-based triggers
+  # ⭐ QUADRANT TRACKING (NEW FEATURE)
+  # Divide frame into 4 quadrants with automatic pan/tilt/zoom
+  # Toggle between center tracking and quadrant tracking
+  quadrant_tracking:
+    enabled: false  # Set to true to use quadrant tracking instead of center tracking
+    
+    # Define the 4 quadrant boundaries (no presets needed!)
+    # System automatically calculates pan/tilt offsets from master view
+    quadrants:
+      # Top-Left: upper-left quadrant (0-50% X, 0-50% Y)
+      top_left:
+        x_range: [0.0, 0.5]
+        y_range: [0.0, 0.5]
+        description: "Top-Left quadrant - auto-calculated from master view"
+      
+      # Top-Right: upper-right quadrant (50-100% X, 0-50% Y)
+      top_right:
+        x_range: [0.5, 1.0]
+        y_range: [0.0, 0.5]
+        description: "Top-Right quadrant - auto-calculated from master view"
+      
+      # Bottom-Left: lower-left quadrant (0-50% X, 50-100% Y)
+      bottom_left:
+        x_range: [0.0, 0.5]
+        y_range: [0.5, 1.0]
+        description: "Bottom-Left quadrant - auto-calculated from master view"
+      
+      # Bottom-Right: lower-right quadrant (50-100% X, 50-100% Y)
+      bottom_right:
+        x_range: [0.5, 1.0]
+        y_range: [0.5, 1.0]
+        description: "Bottom-Right quadrant - auto-calculated from master view"
+    
+    # Quadrant tracking behavior
+    behavior:
+      # Automatically zoom in when entering a quadrant
+      zoom_on_entry: true
+      zoom_level: 0.2  # Zoom velocity (0.0 to 1.0) - reduced from 0.5 for less aggressive zoom
+      
+      # Continue fine-tuning pan/tilt within quadrant
+      fine_tune_tracking: true
+  
+  # Zones define areas of the frame and their corresponding camera presets
   # Define which directions trigger PTZ movements
   direction_triggers:
     # When object moves right to left, move camera to left zone
@@ -133,7 +178,7 @@ tracking:
     # Return to home position after inactivity
     auto_return_home: true
     home_preset: "Preset005"  # home position - center (idle position)
-    inactivity_timeout: 25  # seconds
+    inactivity_timeout: 15  # seconds
     
     # Maximum PTZ movements per minute (rate limiting) - increased for fast tracking
     max_movements_per_minute: 300

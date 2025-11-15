@@ -311,6 +311,22 @@ body {
     background-color: var(--color-secondary);
 }
 
+.btn-info {
+    background-color: #0ea5e9;
+    color: white;
+    border: 1px solid #0284c7;
+}
+
+.btn-info:hover:not(:disabled) {
+    background-color: #0284c7;
+    transform: translateY(-2px);
+}
+
+.btn-info.active {
+    background-color: #059669;
+    border-color: #047857;
+}
+
 .btn-block {
     width: 100%;
 }
