@@ -167,7 +167,8 @@ class TrackingEngine:
         self.current_preset: Optional[str] = None
         self.last_ptz_time: float = 0.0
         self.last_movement_time: float = 0.0  # Track inactivity for home return
-        self.home_preset: str = config.home_preset  # Load from config (Preset004)
+        self.home_preset: str = config.home_preset  # Load from config (e.g., Preset003)
+        self.idle_preset_override: Optional[str] = None  # UI dropdown can override home preset at idle time
         self.inactivity_timeout: float = config.inactivity_timeout  # Load from config
         self.active_events: Dict[str, TrackingEvent] = {}
         self.completed_events: List[TrackingEvent] = []
@@ -509,39 +510,57 @@ class TrackingEngine:
             if self._should_trigger_tracking(detection, direction, track_info):
                 self._handle_tracking_action(detection, direction, track_info, frame)
                 self.last_movement_time = current_time  # Update last movement time
-    
     def _check_inactivity_and_return_home(self, current_time: float) -> None:
         """
         Check if camera has been inactive and return to home position
         
+        Idle behavior:
+        1. Check if idle_preset_override is set (user selected from dropdown)
+        2. If yes, use the override (what user selected)
+        3. If no override, use the default home_preset from config
+        
         Args:
             current_time: Current timestamp
         """
-        # Check if we have a home position configured
-        if not self.home_preset:
+        # Determine which preset to use at idle time
+        # PRIORITY: Override (if set) > Config default
+        if self.idle_preset_override:
+            preset_to_use = self.idle_preset_override
+            print(f"⭐ [IDLE] Using dropdown override: {preset_to_use}")
+        else:
+            preset_to_use = self.home_preset  # Default: config value
+            print(f"⭐ [IDLE] Using config home preset: {preset_to_use}")
+        
+        if not preset_to_use:
             return
         
         # If no movement in the timeout period, return home
         time_since_last_move = current_time - self.last_movement_time
         
         if time_since_last_move >= self.inactivity_timeout:
-            # Only go home if not already there
-            if self.current_preset != self.home_preset:
+            # Allow idle return if:
+            # 1. We're moving to a DIFFERENT preset than current (always allow)
+            # 2. OR it's been 1+ second since last PTZ command (prevent hammering same preset)
+            time_since_last_ptz = current_time - self.last_ptz_time
+            
+            should_move = (preset_to_use != self.current_preset) or (time_since_last_ptz > 1.0)
+            
+            if should_move:
                 try:
                     # ⭐ DIAGNOSTIC LOG: Home return being triggered
                     print(f"⭐ [HOME RETURN] Inactivity timeout ({time_since_last_move:.1f}s >= {self.inactivity_timeout}s)")
-                    print(f"⭐ [HOME RETURN] Moving to home preset: {self.home_preset}")
-                    logger.warning(f"⭐ [HOME RETURN] Inactivity timeout - Moving to home preset {self.home_preset}")
+                    print(f"⭐ [HOME RETURN] Current: {self.current_preset}, Moving to: {preset_to_use}")
+                    logger.warning(f"⭐ [HOME RETURN] Inactivity timeout - Moving to preset {preset_to_use}")
                     
                     logger.info(
                         f"No movement for {time_since_last_move:.1f}s - "
-                        f"Returning to home preset {self.home_preset}"
+                        f"Returning to preset {preset_to_use}"
                     )
-                    self.ptz.goto_preset(self.home_preset, speed=0.7)
-                    self.current_preset = self.home_preset
+                    self.ptz.goto_preset(preset_to_use, speed=0.7)
+                    self.current_preset = preset_to_use
                     self.last_ptz_time = current_time
                 except Exception as e:
-                    logger.error(f"Failed to return to home preset: {e}")
+                    logger.error(f"Failed to return to idle preset: {e}")
     
     def _should_trigger_tracking(
         self,
@@ -722,8 +741,8 @@ class TrackingEngine:
             
             # ⭐ TILT DAMPING: Limit aggressive tilt (camera may not physically respond)
             # Some cameras have mechanical limits or firmware lag on tilt
-            # Reduce max tilt velocity to 0.5 to avoid overdriving
-            MAX_TILT_VELOCITY = 0.5  # Limit to 50% instead of 100%
+            # Increase tilt velocity to 0.75 for better upward tracking response
+            MAX_TILT_VELOCITY = 0.75  # Increased to 75% for better vertical tracking
             tilt_velocity = max(-MAX_TILT_VELOCITY, min(MAX_TILT_VELOCITY, tilt_velocity))
             
             # Clamp to valid range

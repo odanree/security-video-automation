@@ -643,6 +643,56 @@ async def toggle_quadrant_mode(enabled: Optional[bool] = None) -> Dict[str, Any]
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.post("/api/tracking/home-preset")
+async def set_home_preset(request: Dict[str, str]) -> Dict[str, Any]:
+    """
+    Update idle override preset - checked at idle time
+    
+    When the idle timer triggers (15 seconds), the system will:
+    1. Check if this override preset is set (checkbox enabled)
+    2. If yes, use the override preset from dropdown
+    3. If no (None or unchecked), use the default from config
+    
+    Args:
+        request: JSON with 'preset_token' key (or None to clear override)
+        
+    Returns:
+        Status confirmation
+    """
+    global tracking_engine
+    
+    if not tracking_engine:
+        raise HTTPException(status_code=500, detail="Tracking engine not initialized")
+    
+    try:
+        preset_token = request.get('preset_token')
+        
+        if preset_token is None:
+            # Clear override - will use admin config
+            tracking_engine.idle_preset_override = None
+            logger.info(f"✓ Idle override cleared - will use config home preset")
+            
+            return {
+                "status": "success",
+                "idle_preset_override": None,
+                "message": "Idle override cleared - using config home preset"
+            }
+        else:
+            # Store the dropdown-selected preset as override
+            tracking_engine.idle_preset_override = preset_token
+            logger.info(f"✓ Idle override preset set to: {preset_token}")
+            
+            return {
+                "status": "success",
+                "idle_preset_override": preset_token,
+                "message": f"Idle override preset set to {preset_token}"
+            }
+    except Exception as e:
+        logger.error(f"Error setting idle preset override: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+
 @app.get("/api/tracking/quadrant/status")
 async def get_quadrant_status() -> Dict[str, Any]:
     """Get current quadrant tracking mode status"""
