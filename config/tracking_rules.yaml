@@ -177,7 +177,7 @@ tracking:
     
     # Return to home position after inactivity
     auto_return_home: true
-    home_preset: "Preset005"  # home position - center (idle position)
+    home_preset: "Preset003"  # home position - idle position
     inactivity_timeout: 15  # seconds
     
     # Maximum PTZ movements per minute (rate limiting) - increased for fast tracking
