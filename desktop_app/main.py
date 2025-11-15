@@ -863,6 +863,67 @@ class CameraTrackerApp(QMainWindow):
         if detections_drawn > 0:
             print(f"[SUCCESS] Drew {detections_drawn} detection box(es) on {frame_width}×{frame_height} frame")
         
+        # Draw quadrant borders overlay
+        frame = self.draw_quadrant_borders(frame)
+        
+        return frame
+    
+    def draw_quadrant_borders(self, frame: np.ndarray) -> np.ndarray:
+        """Draw the 4 quadrant borders on the frame for visual reference.
+        
+        Divides the frame into 4 zones (left/right, top/bottom) with visible lines.
+        """
+        frame_height, frame_width = frame.shape[:2]
+        
+        # Calculate quadrant dividers (center points)
+        mid_x = frame_width // 2
+        mid_y = frame_height // 2
+        
+        # Quadrant line style: thin semi-transparent lines with dashed effect
+        line_color = (255, 255, 255)  # White
+        line_thickness = 1
+        
+        # Vertical line (left/right divider)
+        # Use dashed effect by drawing segments
+        dash_length = 20
+        gap_length = 10
+        
+        for y in range(0, frame_height, dash_length + gap_length):
+            end_y = min(y + dash_length, frame_height)
+            cv2.line(frame, (mid_x, y), (mid_x, end_y), line_color, line_thickness)
+        
+        # Horizontal line (top/bottom divider)
+        for x in range(0, frame_width, dash_length + gap_length):
+            end_x = min(x + dash_length, frame_width)
+            cv2.line(frame, (x, mid_y), (end_x, mid_y), line_color, line_thickness)
+        
+        # Add corner markers at quadrant intersections
+        marker_size = 15
+        marker_color = (0, 255, 255)  # Cyan
+        marker_thickness = 2
+        
+        # Center intersection crosshair
+        cv2.line(frame, (mid_x - marker_size, mid_y), (mid_x + marker_size, mid_y), marker_color, marker_thickness)
+        cv2.line(frame, (mid_x, mid_y - marker_size), (mid_x, mid_y + marker_size), marker_color, marker_thickness)
+        
+        # Draw quadrant labels (small text in each corner)
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        font_scale = 0.5
+        font_thickness = 1
+        font_color = (200, 200, 200)  # Light gray
+        
+        # Top-left quadrant
+        cv2.putText(frame, "TL", (10, 25), font, font_scale, font_color, font_thickness)
+        
+        # Top-right quadrant
+        cv2.putText(frame, "TR", (frame_width - 40, 25), font, font_scale, font_color, font_thickness)
+        
+        # Bottom-left quadrant
+        cv2.putText(frame, "BL", (10, frame_height - 10), font, font_scale, font_color, font_thickness)
+        
+        # Bottom-right quadrant
+        cv2.putText(frame, "BR", (frame_width - 40, frame_height - 10), font, font_scale, font_color, font_thickness)
+        
         return frame
     
     def on_stats_received(self, stats: dict):

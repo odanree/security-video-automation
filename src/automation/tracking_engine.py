@@ -720,6 +720,12 @@ class TrackingEngine:
             # Apply sign (direction) to velocity - negative for up, positive for down
             tilt_velocity = -(max_tilt_velocity * quadratic_velocity * (1 if offset_pixels_y > 0 else -1))
             
+            # ⭐ TILT DAMPING: Limit aggressive tilt (camera may not physically respond)
+            # Some cameras have mechanical limits or firmware lag on tilt
+            # Reduce max tilt velocity to 0.5 to avoid overdriving
+            MAX_TILT_VELOCITY = 0.5  # Limit to 50% instead of 100%
+            tilt_velocity = max(-MAX_TILT_VELOCITY, min(MAX_TILT_VELOCITY, tilt_velocity))
+            
             # Clamp to valid range
             tilt_velocity = max(-1.0, min(1.0, tilt_velocity))
             tilt_state = "TRACKING_Y"
@@ -776,12 +782,15 @@ class TrackingEngine:
         try:
             # Execute continuous pan/tilt/zoom movement (blocking with SHORT duration)
             # CRITICAL: Must use blocking=True, otherwise camera never stops moving!
-            # We use very short duration (0.1s) so it returns quickly for next frame
+            # ⭐ TILT NOTE: Use 0.15s duration instead of 0.1s to give camera time to respond
+            # to tilt commands. Dahua cameras can have mechanical lag on upward tilt.
+            move_duration = 0.15  # Slightly longer for tilt responsiveness
+            
             self.ptz.continuous_move(
                 pan_velocity=pan_velocity,
                 tilt_velocity=tilt_velocity,
                 zoom_velocity=zoom_velocity,  # Auto-zoom based on distance
-                duration=0.1,  # Short duration for responsive updates
+                duration=move_duration,  # Increased for tilt responsiveness
                 blocking=True  # CRITICAL: Automatically stops after duration
             )
             
