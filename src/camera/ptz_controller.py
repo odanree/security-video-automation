@@ -213,7 +213,7 @@ class PTZController:
             
             # ⭐ DETAILED LOG: Log the actual ONVIF command being sent
             logger.warning(f"⭐ [PTZ COMMAND] ContinuousMove: pan={pan_velocity}, tilt={tilt_velocity}, zoom={zoom_velocity}, blocking={blocking}, duration={duration}")
-            print(f"⭐ [PTZ COMMAND] ContinuousMove: pan={pan_velocity}, tilt={tilt_velocity}, zoom={zoom_velocity}")
+            print(f"⭐ [PTZ COMMAND] ContinuousMove: pan={pan_velocity}, tilt={tilt_velocity}, zoom={tilt_velocity}")
             
             # Start movement
             self.ptz_service.ContinuousMove(request)
@@ -309,16 +309,15 @@ class PTZController:
                 'Zoom': {'x': speed}
             }
             
-            logger.info(
-                f"Executing relative move: pan={pan_delta}, tilt={tilt_delta}, zoom={zoom_delta}, speed={speed}"
+            logger.debug(
+                f"Relative move: pan_delta={pan_delta}, tilt_delta={tilt_delta}"
             )
             self.ptz_service.RelativeMove(request)
-            logger.info("Relative move command sent successfully")
             
             return True
             
         except Exception as e:
-            logger.error(f"Relative move failed: {e}", exc_info=True)
+            logger.error(f"Relative move failed: {e}")
             return False
     
     def stop(self) -> bool:
