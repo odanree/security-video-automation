@@ -170,7 +170,16 @@ class TrackingEngine:
         self.home_preset: str = config.home_preset  # Load from config (e.g., Preset003)
         self.idle_preset_override: Optional[str] = None  # UI dropdown can override home preset at idle time
         self.inactivity_timeout: float = config.inactivity_timeout  # Load from config
+        
+        # ⭐ PRESET LOCK: Only lock out auto-tracking when user SELECTS A PRESET
+        # Does NOT lock out for continuous manual pan/tilt/zoom hold operations
+        # This allows manual controls to work while protecting preset movements from auto-tracking
+        self.preset_lock_active: bool = False  # Flag for preset-specific locking
+        self.preset_lock_cooldown: float = 2.0  # Seconds to lock out auto-tracking after preset selection
+        self.preset_lock_time: float = 0.0  # Timestamp when preset was selected
+        
         self.active_events: Dict[str, TrackingEvent] = {}
+
         self.completed_events: List[TrackingEvent] = []
         self.event_counter = 0
         
@@ -214,6 +223,11 @@ class TrackingEngine:
         self.on_tracking: Optional[Callable] = None
         self.on_ptz_move: Optional[Callable] = None
         
+        # ⭐ IDLE MONITOR: Separate thread that always monitors inactivity
+        # Runs independently of tracking loop so idle works when tracking is OFF
+        self.idle_monitor_thread: Optional[threading.Thread] = None
+        self.idle_monitor_running: bool = False
+        
         logger.info("TrackingEngine initialized")
     
     def start(self) -> None:
@@ -238,7 +252,13 @@ class TrackingEngine:
         self.detection_thread = threading.Thread(target=self._detection_worker, daemon=True)
         self.detection_thread.start()
         
-        logger.info("✓ Tracking engine started (with async detection)")
+        # ⭐ Start idle monitor thread (independent of tracking)
+        # Monitors inactivity and returns to home preset even when tracking is OFF
+        self.idle_monitor_running = True
+        self.idle_monitor_thread = threading.Thread(target=self._idle_monitor_loop, daemon=True)
+        self.idle_monitor_thread.start()
+        
+        logger.info("✓ Tracking engine started (with async detection + idle monitor)")
     
     def stop(self) -> None:
         """Stop automated tracking"""
@@ -249,12 +269,16 @@ class TrackingEngine:
         
         self.running = False
         self.detection_stop = True
+        self.idle_monitor_running = False  # Stop idle monitor thread
         
         if self.thread and self.thread.is_alive():
             self.thread.join(timeout=5.0)
         
         if self.detection_thread and self.detection_thread.is_alive():
             self.detection_thread.join(timeout=5.0)
+        
+        if self.idle_monitor_thread and self.idle_monitor_thread.is_alive():
+            self.idle_monitor_thread.join(timeout=5.0)
         
         # Close any active events
         for event in self.active_events.values():
@@ -274,6 +298,33 @@ class TrackingEngine:
         """Resume tracking"""
         self.paused = False
         logger.info("Tracking resumed")
+    
+    def _idle_monitor_loop(self) -> None:
+        """
+        Independent idle monitor thread
+        
+        ⭐ CRITICAL: Runs INDEPENDENTLY of tracking loop
+        Monitors inactivity and returns to home preset even when tracking is OFF or PAUSED
+        
+        This ensures idle-to-home functionality works regardless of tracking state.
+        """
+        logger.info("✓ Idle monitor thread started (independent of tracking)")
+        
+        check_interval = 0.5  # Check inactivity every 500ms
+        
+        while self.idle_monitor_running:
+            try:
+                # Monitor inactivity (works when tracking OFF, ON, or PAUSED)
+                current_time = time.time()
+                self._check_inactivity_and_return_home(current_time)
+                
+                time.sleep(check_interval)
+                
+            except Exception as e:
+                logger.error(f"Error in idle monitor loop: {e}")
+                time.sleep(check_interval)
+        
+        logger.info("Idle monitor thread stopped")
     
     def _tracking_loop(self) -> None:
         """Main tracking loop (runs in background thread)"""
@@ -474,9 +525,12 @@ class TrackingEngine:
         if self.on_detection:
             self.on_detection(detections)
         
+        # ⭐ CRITICAL FIX: Always check idle return, regardless of detections
+        # This allows idle timeout to work even when camera detects noise/reflections
+        self._check_inactivity_and_return_home(current_time)
+        
         if not detections:
-            # No detections - check if we should return to home position
-            self._check_inactivity_and_return_home(current_time)
+            # No detections - return from tracking loop
             return
         
         # Step 2: Assign stable object IDs using centroid tracking
@@ -574,6 +628,9 @@ class TrackingEngine:
         For center-of-frame tracking: Only track MOVING objects (not stationary).
         Ignores stationary objects to save PTZ movements and power.
         
+        ⭐ PRESET LOCK: Don't auto-track while user is selecting a preset
+        (Allows continuous manual pan/tilt controls to work freely)
+        
         Args:
             detection: Detection result
             direction: Movement direction
@@ -582,6 +639,21 @@ class TrackingEngine:
         Returns:
             True if action should be triggered
         """
+        # ⭐ CRITICAL: Don't auto-track if user just selected a preset
+        # This allows preset movement to complete without being overridden
+        # NOTE: Does NOT block manual continuous pan/tilt/zoom - only preset selections
+        if self.preset_lock_active:
+            time_since_preset = time.time() - self.preset_lock_time
+            if time_since_preset < self.preset_lock_cooldown:
+                logger.debug(
+                    f"Preset lock active - Skipping auto-tracking ({time_since_preset:.1f}s / {self.preset_lock_cooldown}s)"
+                )
+                return False
+            else:
+                # Cooldown expired, re-enable auto-tracking
+                self.preset_lock_active = False
+                logger.info("Preset lock expired - Auto-tracking resumed")
+        
         # CRITICAL: Don't track stationary objects - waste of PTZ movements
         if direction == Direction.STATIONARY:
             return False

@@ -21,6 +21,7 @@ import cv2
 import asyncio
 import json
 import threading
+import time
 from datetime import datetime
 from pathlib import Path
 import logging
@@ -330,6 +331,15 @@ async def move_to_preset(preset_token: str, speed: float = 0.5) -> Dict[str, str
     
     try:
         ptz_controller.goto_preset(preset_token, speed=speed)
+        
+        # ⭐ PRESET LOCK: Notify tracking engine that user selected a preset
+        # This locks out auto-tracking for 2 seconds to let preset complete
+        # NOTE: Manual continuous pan/tilt/zoom holds are NOT locked out
+        if tracking_engine:
+            tracking_engine.preset_lock_active = True
+            tracking_engine.preset_lock_time = time.time()
+            logger.info(f"🔒 Preset lock activated - Auto-tracking locked for {tracking_engine.preset_lock_cooldown}s")
+        
         return {
             "status": "success",
             "message": f"Moving to preset {preset_token}",
