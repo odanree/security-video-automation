@@ -14,6 +14,7 @@
 - **📊 Web Dashboard** - Live monitoring, statistics, and manual controls
 - **⚙️ Configurable Rules** - YAML-based tracking configuration
 - **🔌 ONVIF Compatible** - Works with most IP PTZ cameras
+- **🛡️ Production Resilience** - Circuit breakers, retry policies, health monitoring, and metrics
 
 ## 🎬 Demo
 
@@ -232,6 +233,28 @@ tracking:
 
 ## 🛠️ Development
 
+### Project Architecture
+
+The system is built with production-grade resilience:
+
+```
+src/
+├── ai/              # Object detection and tracking models
+├── camera/          # ONVIF PTZ camera control
+├── automation/      # Main tracking engine
+├── video/           # Stream handling and processing
+├── web/             # FastAPI dashboard and REST API
+├── resilience/      # Production resilience patterns ⭐
+│   ├── circuit_breaker.py    # Prevent cascading failures
+│   ├── retry.py              # Recover from transient failures
+│   └── health_monitor.py     # System health tracking
+├── monitoring/      # Performance metrics collection ⭐
+│   └── metrics.py            # Thread-safe metrics with percentiles
+└── utils/           # Configuration and utilities
+```
+
+**New in v1.1:** Production-ready resilience layer with circuit breakers, retry policies, and health monitoring. See [📖 RESILIENCE.md](docs/RESILIENCE.md) for details.
+
 ### Git Workflow
 
 We use **feature branches** and **Pull Requests**. Never commit directly to `main`.
@@ -298,10 +321,19 @@ uvicorn src.web.app:app --host 0.0.0.0 --port 8000
 
 ### API Endpoints
 
+**Core Endpoints:**
 - `GET /api/camera/status` - Camera status and position
 - `POST /api/camera/preset/{id}` - Move to preset
 - `GET /api/tracking/stats` - Tracking statistics
 - `WebSocket /ws/video` - Live video stream
+
+**Health & Resilience Endpoints:**
+- `GET /api/health` - Simple health check (JSON)
+- `GET /api/metrics` - Performance metrics (latencies, counters)
+- `GET /api/resilience/status` - Circuit breaker and retry policy status
+- `GET /health` - Minimal health check (legacy)
+
+For detailed resilience documentation, see [📖 RESILIENCE.md](docs/RESILIENCE.md)
 
 ## 🎯 Use Cases
 
