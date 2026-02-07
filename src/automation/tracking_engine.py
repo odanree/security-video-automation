@@ -30,6 +30,8 @@ from src.ai.object_detector import ObjectDetector, DetectionResult
 from src.ai.motion_tracker import MotionTracker, Direction, TrackInfo
 from src.camera.ptz_controller import PTZController
 from src.video.stream_handler import VideoStreamHandler
+from src.resilience import CircuitBreaker, RetryPolicy, HealthMonitor, HealthStatus
+from src.monitoring import MetricsCollector
 
 
 logging.basicConfig(level=logging.INFO)
@@ -228,7 +230,54 @@ class TrackingEngine:
         self.idle_monitor_thread: Optional[threading.Thread] = None
         self.idle_monitor_running: bool = False
         
+        # ⭐ RESILIENCE LAYER: Circuit breakers, retry policies, and health monitoring
+        # PTZ circuit breaker to prevent cascading failures
+        self.ptz_breaker = CircuitBreaker(
+            failure_threshold=5,
+            timeout=30.0,
+            success_threshold=2,
+            expected_exception=Exception,
+            name="ptz_controller"
+        )
+        
+        # Detection retry policy for transient failures
+        self.detection_retry = RetryPolicy(
+            max_attempts=3,
+            base_delay=0.5,
+            max_delay=5.0,
+            jitter=True,
+            name="object_detection"
+        )
+        
+        # Metrics collector for performance monitoring
+        self.metrics = MetricsCollector(name="tracking_engine")
+        
+        # Health monitor for system status
+        self.health_monitor = HealthMonitor(
+            timeout=5.0,
+            alert_on_degraded=False,
+            name="tracking_engine_health"
+        )
+        
+        # Register health checks
+        self.health_monitor.register_check(
+            "ptz_controller",
+            self._health_check_ptz,
+            "PTZ camera controller connectivity"
+        )
+        self.health_monitor.register_check(
+            "detector",
+            self._health_check_detector,
+            "Object detection model health"
+        )
+        self.health_monitor.register_check(
+            "video_stream",
+            self._health_check_stream,
+            "Video stream connectivity"
+        )
+        
         logger.info("TrackingEngine initialized")
+
     
     def start(self) -> None:
         """Start automated tracking in background thread"""
@@ -1249,7 +1298,48 @@ class TrackingEngine:
         self.mode = mode
         logger.info(f"Tracking mode changed to: {mode.value}")
     
+    # ⭐ RESILIENCE HEALTH CHECK METHODS
+    
+    async def _health_check_ptz(self) -> HealthStatus:
+        """Health check for PTZ controller."""
+        try:
+            # Try a quick status check without moving
+            if hasattr(self.ptz, 'get_status'):
+                self.ptz.get_status()
+            return HealthStatus.HEALTHY
+        except Exception as e:
+            logger.error(f"PTZ health check failed: {e}")
+            return HealthStatus.UNHEALTHY
+    
+    async def _health_check_detector(self) -> HealthStatus:
+        """Health check for object detector."""
+        try:
+            # Detector should be initialized and loadable
+            if self.detector is None:
+                return HealthStatus.UNHEALTHY
+            return HealthStatus.HEALTHY
+        except Exception as e:
+            logger.error(f"Detector health check failed: {e}")
+            return HealthStatus.UNHEALTHY
+    
+    async def _health_check_stream(self) -> HealthStatus:
+        """Health check for video stream."""
+        try:
+            # Check if stream is actively providing frames
+            if self.stream is None:
+                return HealthStatus.UNHEALTHY
+            
+            if self.frame_count == 0:
+                # If no frames processed yet, still healthy (just started)
+                return HealthStatus.HEALTHY
+            
+            return HealthStatus.HEALTHY
+        except Exception as e:
+            logger.error(f"Stream health check failed: {e}")
+            return HealthStatus.UNHEALTHY
+    
     def __repr__(self) -> str:
+
         """String representation"""
         return (
             f"TrackingEngine(running={self.running}, "

@@ -7,6 +7,7 @@ Provides REST API endpoints for:
 - PTZ control
 - Detection events
 - System configuration
+- System health and resilience monitoring
 """
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Body
@@ -33,6 +34,8 @@ from src.ai.motion_tracker import MotionTracker
 from src.automation.tracking_engine import TrackingEngine
 from src.camera.ptz_controller import PTZController
 from src.utils.config_loader import ConfigLoader
+from src.resilience import HealthStatus
+
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -1003,10 +1006,117 @@ async def broadcast_event(event_data: Dict[str, Any]):
 # Health Check
 # ============================================================================
 
+@app.get("/api/health")
+async def api_health_detailed():
+    """
+    Detailed system health check endpoint.
+    
+    Returns system status from all health checks including:
+    - PTZ controller connectivity
+    - Object detection model
+    - Video stream status
+    """
+    if tracking_engine is None:
+        return JSONResponse(
+            status_code=503,
+            content={
+                "overall": "unknown",
+                "timestamp": datetime.now().isoformat(),
+                "error": "Tracking engine not initialized",
+                "checks": []
+            }
+        )
+    
+    # Run all health checks
+    report = await tracking_engine.health_monitor.run_checks()
+    
+    return {
+        "overall": report.overall.value,
+        "timestamp": report.to_dict()["timestamp"],
+        "checks": [check.to_dict() for check in report.checks],
+        "alerts": report.alerts,
+    }
+
+
+@app.get("/api/metrics")
+async def get_metrics():
+    """
+    Performance metrics endpoint.
+    
+    Returns system metrics including:
+    - Detection latencies (p50, p95, p99)
+    - PTZ movement latencies
+    - Frame processing metrics
+    - Event counters
+    """
+    if tracking_engine is None:
+        return JSONResponse(
+            status_code=503,
+            content={"error": "Tracking engine not initialized"}
+        )
+    
+    metrics_data = tracking_engine.metrics.get_stats()
+    
+    # Also include basic tracking stats
+    metrics_data["tracking"] = {
+        "frames_processed": tracking_engine.frame_count,
+        "detections": tracking_engine.detection_count,
+        "ptz_movements": tracking_engine.ptz_movement_count,
+        "active_events": len(tracking_engine.active_events),
+        "completed_events": len(tracking_engine.completed_events),
+    }
+    
+    return metrics_data
+
+
+@app.get("/api/resilience/status")
+async def get_resilience_status():
+    """
+    Resilience layer status endpoint.
+    
+    Returns detailed status of:
+    - Circuit breaker states
+    - Retry policy metrics
+    - Health check history
+    """
+    if tracking_engine is None:
+        return JSONResponse(
+            status_code=503,
+            content={"error": "Tracking engine not initialized"}
+        )
+    
+    ptz_breaker_status = tracking_engine.ptz_breaker.get_status()
+    detection_retry_metrics = tracking_engine.detection_retry.get_metrics()
+    health_report = tracking_engine.health_monitor.get_last_report()
+    
+    return {
+        "timestamp": datetime.now().isoformat(),
+        "circuit_breaker": {
+            "ptz_controller": ptz_breaker_status
+        },
+        "retry_policies": {
+            "object_detection": detection_retry_metrics
+        },
+        "health": health_report.to_dict() if health_report else {
+            "overall": "unknown",
+            "checks": [],
+            "alerts": []
+        }
+    }
+
+
 @app.get("/health")
 async def health_check():
-    """Simple health check endpoint"""
-    return {"status": "healthy", "timestamp": datetime.now().isoformat()}
+    """Simple health check endpoint (minimal response)"""
+    if tracking_engine is None:
+        return {"status": "unknown"}
+    
+    # Get overall health
+    report = tracking_engine.health_monitor.get_last_report()
+    status = report.overall.value if report else "unknown"
+    
+    return {"status": status, "timestamp": datetime.now().isoformat()}
+
 
 
 if __name__ == "__main__":
